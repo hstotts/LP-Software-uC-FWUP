@@ -773,8 +773,6 @@ void handle_PUS_3_Service(void const * argument)
     /* Infinite loop */
     for(;;)
     {
-    	// if(!periodic_report)
-    	// {
     		if (xQueueReceive(PUS_3_Queue, &pus3_msg_received, portMAX_DELAY) == pdPASS)
     		{
     			result = PUS_3_set_report_frequency(pus3_msg_received.data, &pus3_msg_received);
@@ -782,38 +780,14 @@ void handle_PUS_3_Service(void const * argument)
     			if(result == NO_ERROR)
     			{
     				current_ticks = xTaskGetTickCount();
-            // PUS_3_collect_HK_data(current_ticks);
-
-            // PUS_3_HK_send(&pus3_msg_received);
-
             PUS_1_send_succ_comp(&pus3_msg_received.SPP_header, &pus3_msg_received.PUS_TC_header);
-
-            // if(current_uC_report_frequency == 2 || current_FPGA_report_frequency == 2)
-            // {
-            //   periodic_report = 1;
-            // }
     			}
     			else
     			{
     				PUS_1_send_fail_comp(&pus3_msg_received.SPP_header, &pus3_msg_received.PUS_TC_header, result);
     			}
     		}
-    	// }
-    	// else
-    	// {
-    	// 	if (xQueuePeek(PUS_3_Queue, &pus3_msg_received, 2000) == pdPASS)
-    	// 	{
-    	// 		periodic_report = 0;
-    	// 	}
-    	// 	else
-    	// 	{
-    	// 		current_ticks = xTaskGetTickCount();
 
-			// 	PUS_3_collect_HK_data(current_ticks);
-
-			// 	PUS_3_HK_send(&pus3_msg_received);
-    	// 	}
-    	// }
     	osDelay(1);
     }
   /* USER CODE END 5 */
@@ -992,7 +966,7 @@ void handle_UART_IN_FPGA(void const * argument)
 						if(PUS_8_check_FPGA_msg_format(UART_FPGA_Rx_Buffer, 12))
 						{
 							UART_FPGA_OBC_Tx_Buffer[0] = FPGA_GET_CB_VOL_LVL;
-							// UART_FPGA_OBC_Tx_Buffer[0] is set when first sending the msg to the FPGA
+							// UART_FPGA_OBC_Tx_Buffer[0] & [1] is set when first sending the msg to the FPGA
 							// TO DO: change FPGA implementation to also send the probe ID
 							UART_FPGA_OBC_Tx_Buffer[2] = UART_FPGA_Rx_Buffer[3];
 							UART_FPGA_OBC_Tx_Buffer[3] = UART_FPGA_Rx_Buffer[4];
@@ -1135,10 +1109,6 @@ void handle_UART_IN_FPGA(void const * argument)
 					(UART_FPGA_Rx_Buffer[2] == FPGA_EN_CB_MODE && send_buffered_data == 1))
 				{
           xQueueSend(UART_OBC_Out_Queue, &msg_to_send, portMAX_DELAY);
-          //if (msg_to_send.TM_data_len > 0)
-          //{
-          //  xQueueSend(UART_OBC_Out_Queue, &msg_to_send, portMAX_DELAY);
-          //}
         }
 				HAL_UART_Receive_DMA(&huart5, UART_FPGA_Rx_Buffer, 2 + 9 + 1);
 			}

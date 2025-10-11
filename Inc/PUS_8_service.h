@@ -79,7 +79,6 @@ typedef enum {
 
 	REBOOT_DEVICE 					= 0xF3,
 	JUMP_TO_IMAGE					= 0xF4,
-    FPGA_SET_PERIOD_HK  			= 0xF2,
 
 } PUS_8_Func_ID;
 

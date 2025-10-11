@@ -156,7 +156,7 @@ void Handle_incoming_TC() {
     // Decode COBS frame if valid
     if(!COBS_is_valid(UART_RxBuffer.RxBuffer, UART_RxBuffer.frame_size))
     {
-    	PUS_1_send_fail_acc(&Error_SPP_Header, &Error_PUS_TC_Header, &PUS_1_Fail_Acc_Data, COBS_ERROR);
+    	PUS_1_send_fail_acc(&Error_SPP_Header, &Error_PUS_TC_Header, &PUS_1_Fail_Acc_Data, COBS_FRAME_ERROR);
 		return;
     }
     uint8_t 		decoded_msg[UART_RxBuffer.frame_size];
@@ -169,7 +169,7 @@ void Handle_incoming_TC() {
 
     if(!SPP_decode_header(decoded_msg, decoded_msg_size, &SPP_header))
     {
-    	PUS_1_send_fail_acc(&Error_SPP_Header, &Error_PUS_TC_Header, &PUS_1_Fail_Acc_Data, SPP_DECODE_ERROR);
+    	PUS_1_send_fail_acc(&Error_SPP_Header, &Error_PUS_TC_Header, &PUS_1_Fail_Acc_Data, SPP_HEADER_ERROR);
     	return;
     }
 
@@ -180,12 +180,12 @@ void Handle_incoming_TC() {
     // The computed data length has to be the same as the length of the message received
     if(decoded_msg_size != decoded_msg_expected_size)
     {
-    	PUS_1_send_fail_acc(&SPP_header, &Error_PUS_TC_Header, &PUS_1_Fail_Acc_Data, DATA_LENGTH_MISMATCH_ERROR);
+    	PUS_1_send_fail_acc(&SPP_header, &Error_PUS_TC_Header, &PUS_1_Fail_Acc_Data, INVALID_PLENGTH);
     	return;
     }
 
 	if (SPP_validate_checksum(decoded_msg, decoded_msg_size, &PUS_1_Fail_Acc_Data) != SPP_OK) {
-		PUS_1_send_fail_acc(&SPP_header, &Error_PUS_TC_Header, &PUS_1_Fail_Acc_Data, CRC_MISMATCH_ERROR);
+		PUS_1_send_fail_acc(&SPP_header, &Error_PUS_TC_Header, &PUS_1_Fail_Acc_Data, CS_DISCREP);
 		return;
 	}
 
@@ -197,7 +197,7 @@ void Handle_incoming_TC() {
 
         if(!PUS_decode_TC_header(decoded_msg + SPP_HEADER_LEN, &PUS_TC_header, SPP_header.packet_data_length - 1))
         {
-        	PUS_1_send_fail_acc(&SPP_header, &Error_PUS_TC_Header, &PUS_1_Fail_Acc_Data, PUS_DECODE_ERROR);
+        	PUS_1_send_fail_acc(&SPP_header, &Error_PUS_TC_Header, &PUS_1_Fail_Acc_Data, UNKNOWN_TYPE_SUBTYPE);
         	return;
         }
 
@@ -221,7 +221,7 @@ void Handle_incoming_TC() {
 			if(result != NO_ERROR)
 				PUS_1_send_fail_acc(&SPP_header, &PUS_TC_header, &PUS_1_Fail_Acc_Data, result);
 		} else {
-			PUS_1_send_fail_acc(&SPP_header, &PUS_TC_header, &PUS_1_Fail_Acc_Data, UNSUPPORTED_SERIVCE_ID_ERROR);
+			PUS_1_send_fail_acc(&SPP_header, &PUS_TC_header, &PUS_1_Fail_Acc_Data, UNKNOWN_TYPE_SUBTYPE);
 		}
     }
 }

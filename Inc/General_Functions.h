@@ -19,22 +19,46 @@
 #include "queue.h"
 #include "main.h"
 
-typedef enum {
-	NO_ERROR								= 1,
-	COBS_ERROR								= 2,
-	SPP_DECODE_ERROR 						= 3,
-	DATA_LENGTH_MISMATCH_ERROR 				= 4,
-	CRC_MISMATCH_ERROR						= 5,
-	PUS_DECODE_ERROR 						= 6,
-	UNSUPPORTED_SERIVCE_ID_ERROR			= 7,
-	UNSUPPORTED_SUBSERVICE_ID_ERROR			= 8,
-	PUS_PROCESS_BUSY_ERROR					= 9,
-	WRONG_SYSTEM_STATE_ERROR				= 10,
-	NULL_POINTER_DEREFERENCING_ERROR		= 11,
-	NOT_ENOUGH_DATA_ERROR					= 12,
-	UNSUPPORTED_ARGUMENT_ERROR 				= 13,
-	UNSUPPORTED_INDEX_ERROR 				= 14,
-	FPGA_MESSAGE_ERROR						= 15,
+typedef enum{
+
+	NO_ERROR                    = 0x0001,   
+
+    // --- Generic CCSDS / PUS validation ---
+    ILLEGAL_VERSION             = 0x0100, // Invalid CCSDS packet version
+    INVALID_PLENGTH             = 0x0106, // TC length out of allowed range
+    UNKNOWN_TYPE_SUBTYPE        = 0x0109, // Unknown service type/subtype
+	COBS_FRAME_ERROR			= 0x010A, // COBS frame not valid
+	SPP_HEADER_ERROR			= 0x010B, // SPP header not valid
+    CS_DISCREP                  = 0x010C, // CRC mismatch
+
+
+    // --- System state and execution ---
+    BAD_STATE                   = 0x0147, // Command cannot be executed in current mode
+    DEV_CPDU_EXEC_FAIL          = 0x0206, // Command execution or device transmission failed
+    UNKNOWN_FUNCTION_ID         = 0x0809, // Unknown Function Management ID
+
+    // --- Housekeeping service ---
+    HK_INVALID_SID              = 0x0300, // SID out of allowed range
+    HK_INVALID_COLL_INT         = 0x0301, // Invalid collection interval 
+    HK_MAX_SID_NB_EXCEEDED      = 0x0304, // Too many SIDs defined
+	HKD_TM_SIZE_EXCEEDED        = 0x0303, // HK packet size exceeds TM buffer
+
+    // --- Memory / FRAM access ---
+    MEM_INVALID_ADDRESS         = 0x0600, // Invalid memory address
+    MEM_HW_ERROR                = 0x0605, // HW/FRAM access failure
+
+    // --- Distribution / undefined parameter ---
+    UNDEFINED_PARAM_ID          = 0x0142, // Undefined parameter ID
+    UNDEFINED_ID                = 0x0132  // Undefined general identifier
+
+// UNUSED
+/* 
+	HK_MAX_SID_NB_EXCEEDED
+	HKD_TM_SIZE_EXCEEDED
+	MEM_INVALID_ADDRESS
+	MEM_HW_ERROR
+*/
+
 } TM_Err_Codes;
 
 typedef struct {

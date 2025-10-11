@@ -24,15 +24,15 @@ QueueHandle_t PUS_3_Queue;
 
 TM_Err_Codes PUS_3_set_report_frequency(uint8_t* data, PUS_3_msg* pus3_msg_received) {
     uint8_t* data_iterator = data;
-    uint16_t SID_num = 0;
-    uint16_t SID = 0;
+    uint8_t SID_num = 0;
+    uint8_t SID = 0;
     memcpy(&SID_num, data_iterator, sizeof(SID_num));
 
     data_iterator += sizeof(SID_num);
 
     for (int i = 0; i < SID_num; i++) {
-        if (data_iterator > data + pus3_msg_received->data_size - 2) {
-            return NOT_ENOUGH_DATA_ERROR;
+        if (data_iterator > data + pus3_msg_received->data_size-1) {
+            return INVALID_PLENGTH;
         }
 
     	SID = 0;
@@ -53,26 +53,29 @@ TM_Err_Codes PUS_3_set_report_frequency(uint8_t* data, PUS_3_msg* pus3_msg_recei
                     msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
                     msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
                     msg[msg_cnt++] = FPGA_GET_SENSOR_DATA; // F9
-                    msg[msg_cnt++] = (uint8_t)(SID & 0x00FF); // HK_ID
+                    msg[msg_cnt++] = SID; // HK_ID
                     msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
 
                     memset(UART_FPGA_Rx_Buffer, 0, sizeof(UART_FPGA_Rx_Buffer));
 
                     if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100) != HAL_OK) {
                         HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
-                        return FPGA_MESSAGE_ERROR;
+                        return DEV_CPDU_EXEC_FAIL;
                     }
                     break;
                 }
 
                 case 2: // 3.31 --> SET PERIOD
                 {
-                    if (data_iterator >= data + pus3_msg_received->data_size) {
-                        return NOT_ENOUGH_DATA_ERROR;
+                    if (data_iterator > data + pus3_msg_received->data_size-1) {
+                        return INVALID_PLENGTH;
                     }
 
                     uint8_t T = *data_iterator;
                     data_iterator++;
+                    if (T < HK_T_DISABLE || T > HK_T_FAST) {
+                        return HK_INVALID_COLL_INT;
+                    }
 
                     uint8_t msg[64] = {0};
                     uint8_t msg_cnt = 0;
@@ -80,7 +83,7 @@ TM_Err_Codes PUS_3_set_report_frequency(uint8_t* data, PUS_3_msg* pus3_msg_recei
                     msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
                     msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
                     msg[msg_cnt++] = FPGA_SET_PERIOD; // F2
-                    msg[msg_cnt++] = (uint8_t)(SID & 0x00FF); // HK_ID
+                    msg[msg_cnt++] = SID; // HK_ID
                     msg[msg_cnt++] = T;
                     msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
 
@@ -88,18 +91,18 @@ TM_Err_Codes PUS_3_set_report_frequency(uint8_t* data, PUS_3_msg* pus3_msg_recei
 
                     if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100) != HAL_OK) {
                         HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
-                        return FPGA_MESSAGE_ERROR;
+                        return DEV_CPDU_EXEC_FAIL;
                     }
                     break;
                 }
 
                 default:
-                    return UNSUPPORTED_ARGUMENT_ERROR;
+                    return UNKNOWN_TYPE_SUBTYPE;
             }
         }
         else
         {
-            return UNSUPPORTED_ARGUMENT_ERROR;
+            return HK_INVALID_SID;
         }
     }
 
@@ -110,15 +113,15 @@ TM_Err_Codes PUS_3_set_report_frequency(uint8_t* data, PUS_3_msg* pus3_msg_recei
 // HK - Housekeeping PUS service 3
 TM_Err_Codes PUS_3_handle_HK_TC(SPP_header_t* SPP_header , PUS_TC_header_t* PUS_TC_header, uint8_t* data, uint8_t data_size)
 {
-    if(data_size < 4)
+    if(data_size < 2)
 	{
-		return NOT_ENOUGH_DATA_ERROR;
+		return INVALID_PLENGTH;
 	}
 	if (Current_Global_Device_State != NORMAL_MODE) {
-        return WRONG_SYSTEM_STATE_ERROR;
+        return BAD_STATE;
     }
     if (SPP_header == NULL || PUS_TC_header == NULL) {
-        return NULL_POINTER_DEREFERENCING_ERROR;
+        return ILLEGAL_VERSION ;
     }
 
     // Define report frequency and handle different message subtypes
@@ -132,7 +135,7 @@ TM_Err_Codes PUS_3_handle_HK_TC(SPP_header_t* SPP_header , PUS_TC_header_t* PUS_
             report_frequency = 2;
             break;
         default:
-            return UNSUPPORTED_SUBSERVICE_ID_ERROR;  // Invalid message subtype
+            return HK_INVALID_SID;  
     }
 
     PUS_1_send_succ_acc(SPP_header, PUS_TC_header);
@@ -145,7 +148,7 @@ TM_Err_Codes PUS_3_handle_HK_TC(SPP_header_t* SPP_header , PUS_TC_header_t* PUS_
 	pus3_msg_to_send.new_report_frequency = report_frequency;
 
     if (xQueueSend(PUS_3_Queue, &pus3_msg_to_send, 0) != pdPASS) {
-    	PUS_1_send_fail_comp(SPP_header, PUS_TC_header, PUS_PROCESS_BUSY_ERROR);
+    	PUS_1_send_fail_comp(SPP_header, PUS_TC_header, BAD_STATE);
     }
 
     return NO_ERROR;

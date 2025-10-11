@@ -67,7 +67,7 @@ TM_Err_Codes PUS_8_unpack_msg(PUS_8_msg *pus8_msg_received, PUS_8_msg_unpacked* 
 
 	// Check at least 2 bytes available: func_id and N_args
 	if ((data_end - data_interator) < 2)
-		return NOT_ENOUGH_DATA_ERROR;
+		return INVALID_PLENGTH;
 
 	pus8_msg_unpacked->func_id = *data_interator++;
 	pus8_msg_unpacked->N_args = *data_interator++;
@@ -75,53 +75,53 @@ TM_Err_Codes PUS_8_unpack_msg(PUS_8_msg *pus8_msg_received, PUS_8_msg_unpacked* 
 	for(int i = 0; i < pus8_msg_unpacked->N_args; i++) {
 
 		if ((data_end - data_interator) < 1)
-			return NOT_ENOUGH_DATA_ERROR; // Need at least arg_ID
+			return INVALID_PLENGTH; // Need at least arg_ID
 
 		uint8_t arg_ID = *data_interator++;
 
 		switch(arg_ID) {
 			case PROBE_ID_ARG_ID:
 				if ((data_end - data_interator) < 1)
-					return NOT_ENOUGH_DATA_ERROR;
+					return INVALID_PLENGTH;
 				pus8_msg_unpacked->probe_ID = *data_interator++;
 				break;
 			case STEP_ID_ARG_ID:
 				if ((data_end - data_interator) < 1)
-					return NOT_ENOUGH_DATA_ERROR;
+					return INVALID_PLENGTH;
 				pus8_msg_unpacked->step_ID = *data_interator++;
 				break;
 			case VOL_LVL_ARG_ID:
 				if ((data_end - data_interator) < sizeof(pus8_msg_unpacked->voltage_level))
-					return NOT_ENOUGH_DATA_ERROR;
+					return INVALID_PLENGTH;
 				memcpy((uint8_t*)&pus8_msg_unpacked->voltage_level, data_interator, sizeof(pus8_msg_unpacked->voltage_level));
 				data_interator += sizeof(pus8_msg_unpacked->voltage_level);
 				break;
 			case N_STEPS_ARG_ID:
 				if ((data_end - data_interator) < 1)
-					return NOT_ENOUGH_DATA_ERROR;
+					return INVALID_PLENGTH;
 				pus8_msg_unpacked->N_steps = *data_interator++;
 				break;
 			case N_SKIP_ARG_ID:
 				if ((data_end - data_interator) < sizeof(pus8_msg_unpacked->N_skip))
-					return NOT_ENOUGH_DATA_ERROR;
+					return INVALID_PLENGTH;
 				memcpy((uint8_t*)&pus8_msg_unpacked->N_skip, data_interator, sizeof(pus8_msg_unpacked->N_skip));
 				data_interator += sizeof(pus8_msg_unpacked->N_skip);
 				break;
 			case N_F_ARG_ID:
 				if ((data_end - data_interator) < sizeof(pus8_msg_unpacked->N_f))
-					return NOT_ENOUGH_DATA_ERROR;
+					return INVALID_PLENGTH;
 				memcpy((uint8_t*)&pus8_msg_unpacked->N_f, data_interator, sizeof(pus8_msg_unpacked->N_f));
 				data_interator += sizeof(pus8_msg_unpacked->N_f);
 				break;
 			case N_POINTS_ARG_ID:
 				if ((data_end - data_interator) < sizeof(pus8_msg_unpacked->N_points))
-					return NOT_ENOUGH_DATA_ERROR;
+					return INVALID_PLENGTH;
 				memcpy((uint8_t*)&pus8_msg_unpacked->N_points, data_interator, sizeof(pus8_msg_unpacked->N_points));
 				data_interator += sizeof(pus8_msg_unpacked->N_points);
 				break;
 			case GS_TARGET_ARG_ID:
 				if ((data_end - data_interator) < 1)
-					return NOT_ENOUGH_DATA_ERROR;
+					return INVALID_PLENGTH;
 				// "sizeof" cannot be used here as .target is an enum type whose length cannot specified(at least in <C23).
 				// If "sizeof" is used, it returns 4, which is incorrect as the target is only a single byte value.
 				// This bug does not cause problems if the target argument is the last one in the message but would
@@ -131,42 +131,19 @@ TM_Err_Codes PUS_8_unpack_msg(PUS_8_msg *pus8_msg_received, PUS_8_msg_unpacked* 
 				break;
 			case N_SAMPLES_PER_STEP_ARG_ID:
 				if ((data_end - data_interator) < sizeof(pus8_msg_unpacked->N_samples_per_step))
-					return NOT_ENOUGH_DATA_ERROR;
+					return INVALID_PLENGTH;
 				memcpy((uint8_t*)&pus8_msg_unpacked->N_samples_per_step, data_interator, sizeof(pus8_msg_unpacked->N_samples_per_step));
 				data_interator += sizeof(pus8_msg_unpacked->N_samples_per_step);
 				break;
 			case FRAM_TABLE_ID_ARG_ID:
 				if ((data_end - data_interator) < sizeof(pus8_msg_unpacked->FRAM_Table_ID))
-					return NOT_ENOUGH_DATA_ERROR;
+					return INVALID_PLENGTH;
 				memcpy((uint8_t*)&pus8_msg_unpacked->FRAM_Table_ID, data_interator, sizeof(pus8_msg_unpacked->FRAM_Table_ID));
 				data_interator += sizeof(pus8_msg_unpacked->FRAM_Table_ID);
 				break;
-			// TODO: DELETE WHEN IMPLEMENTED PUS 3
-			// case HK_ARG_ID:
-			// 	if ((data_end - data_interator) < sizeof(pus8_msg_unpacked->HK_ID))
-			// 		return NOT_ENOUGH_DATA_ERROR;
-			// 	memcpy((uint8_t*)&pus8_msg_unpacked->HK_ID, data_interator, sizeof(pus8_msg_unpacked->HK_ID));
-			// 	data_interator += sizeof(pus8_msg_unpacked->HK_ID);
-			// 	break;
 
-			// TODO: DELETE WHEN IMPLEMENTED PUS 3
-			// case HK_PERIODIC_ARG_ID:
-			// 	if ((data_end - data_interator) < sizeof(pus8_msg_unpacked->HK_PERIODIC_ID))
-			// 		return NOT_ENOUGH_DATA_ERROR;
-			// 	memcpy((uint8_t*)&pus8_msg_unpacked->HK_PERIODIC_ID, data_interator, sizeof(pus8_msg_unpacked->HK_PERIODIC_ID));
-			// 	data_interator += sizeof(pus8_msg_unpacked->HK_PERIODIC_ID);
-			// 	break;
-			// TODO: DELETE WHEN IMPLEMENTED PUS 3
-			// case HK_PERIOD_ARG_ID:
-			// 	if ((data_end - data_interator) < sizeof(pus8_msg_unpacked->HK_PERIOD_ID))
-			// 		return NOT_ENOUGH_DATA_ERROR;
-			// 	memcpy((uint8_t*)&pus8_msg_unpacked->HK_PERIOD_ID, data_interator, sizeof(pus8_msg_unpacked->HK_PERIOD_ID));
-			// 	data_interator += sizeof(pus8_msg_unpacked->HK_PERIOD_ID);
-			// 	break;
-
-				
 			default:
-				return UNSUPPORTED_ARGUMENT_ERROR;
+				return UNDEFINED_PARAM_ID;
 				break;
 		}
 	}
@@ -187,8 +164,8 @@ void PUS_8_copy_table_FRAM_to_FPGA(uint8_t fram_table_id, uint8_t fpga_table_id)
         uint16_t value = read_sweep_table_value_FRAM(fram_table_id, step_id);
 
 		msg[4] = step_id;
-		msg[5] = ((uint8_t*)(&value))[0];
-		msg[6] = ((uint8_t*)(&value))[1];
+		msg[5] = ((uint8_t*)(&value))[0]; // MSB
+		msg[6] = ((uint8_t*)(&value))[1]; // LSB
 
 		if (HAL_UART_Transmit(&huart5, msg, 8, 100)!= HAL_OK) {
 			HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
@@ -207,7 +184,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			if(pus8_msg_unpacked->target == TARGET_uC)
 			{
 				if(pus8_msg_unpacked->probe_ID < 0 || pus8_msg_unpacked->probe_ID > 7)
-					return UNSUPPORTED_INDEX_ERROR; // There are only 8 sweep tables available in the FRAM
+					return UNDEFINED_PARAM_ID; // There are only 8 sweep tables available in the FRAM
 
 				save_sweep_table_value_FRAM(pus8_msg_unpacked->probe_ID,
 											pus8_msg_unpacked->step_ID,
@@ -216,7 +193,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			else if (pus8_msg_unpacked->target == TARGET_FPGA)
 			{
 				if(pus8_msg_unpacked->probe_ID < 0 || pus8_msg_unpacked->probe_ID > 1)
-					return UNSUPPORTED_INDEX_ERROR; // There are only 2 sweep tables available in the FPGA RAM
+					return UNDEFINED_PARAM_ID; // There are only 2 sweep tables available in the FPGA RAM
 
 				uint8_t msg[64] = {0};
 				uint8_t msg_cnt = 0;
@@ -226,14 +203,14 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 				msg[msg_cnt++] = FPGA_SET_SWT_VOL_LVL;
 				msg[msg_cnt++] = pus8_msg_unpacked->probe_ID;
 				msg[msg_cnt++] = pus8_msg_unpacked->step_ID;
-				msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->voltage_level))[0];
-				msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->voltage_level))[1];
+				msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->voltage_level))[0]; // MSB
+				msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->voltage_level))[1]; // LSB 
 
 				msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
 
 				if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100)!= HAL_OK) {
 					HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
-					return FPGA_MESSAGE_ERROR;
+					return DEV_CPDU_EXEC_FAIL;
 				}
 
 			}
@@ -245,7 +222,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			if(pus8_msg_unpacked->target == TARGET_uC)
 			{
 				if(pus8_msg_unpacked->probe_ID < 0 || pus8_msg_unpacked->probe_ID > 7)
-					return UNSUPPORTED_INDEX_ERROR; // There are only 8 sweep tables available in the FRAM
+					return UNDEFINED_PARAM_ID; // There are only 8 sweep tables available in the FRAM
 
 				uint16_t step_voltage = read_sweep_table_value_FRAM(pus8_msg_unpacked->probe_ID,
 																	pus8_msg_unpacked->step_ID);
@@ -258,8 +235,8 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 				msg.TM_data[0] = pus8_msg_unpacked->target;
 				msg.TM_data[1] = pus8_msg_unpacked->probe_ID;
 				msg.TM_data[2] = pus8_msg_unpacked->step_ID;
-
-				memcpy(msg.TM_data + 3*sizeof(uint8_t), &step_voltage, sizeof(uint16_t));
+				msg.TM_data[3] = (uint8_t)((step_voltage >> 8) & 0xFF); // MSB
+				msg.TM_data[4] = (uint8_t)(step_voltage & 0xFF);        // LSB	
 				msg.TM_data_len			= 5;
 
 				xQueueSend(UART_OBC_Out_Queue, &msg, portMAX_DELAY);
@@ -267,7 +244,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			else if(pus8_msg_unpacked->target == TARGET_FPGA)
 			{
 				if(pus8_msg_unpacked->probe_ID < 0 || pus8_msg_unpacked->probe_ID > 1)
-					return UNSUPPORTED_INDEX_ERROR; // There are only 2 sweep tables available in the FPGA RAM
+					return UNDEFINED_PARAM_ID; // There are only 2 sweep tables available in the FPGA RAM
 
 				uint8_t msg[64] = {0};
 				uint8_t msg_cnt = 0;
@@ -288,7 +265,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 
 				if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100)!= HAL_OK) {
 					HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
-					return FPGA_MESSAGE_ERROR;
+					return DEV_CPDU_EXEC_FAIL;
 				}
 			}
 			break;
@@ -311,7 +288,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 
 			if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100)!= HAL_OK) {
 				HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
-				return FPGA_MESSAGE_ERROR;
+				return DEV_CPDU_EXEC_FAIL;
 			}
 
 			// VERY IMPORTANT TO CLEAR THE INTERRUPTS
@@ -342,7 +319,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 
 			if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100)!= HAL_OK) {
 				HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
-				return FPGA_MESSAGE_ERROR;
+				return DEV_CPDU_EXEC_FAIL;
 			}
 
 			break;
@@ -361,7 +338,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 
 			if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100)!= HAL_OK) {
 				HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
-				return FPGA_MESSAGE_ERROR;
+				return DEV_CPDU_EXEC_FAIL;
 			}
 
 			break;
@@ -370,7 +347,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 		case FPGA_SET_CB_VOL_LVL:
 		{
 			if(pus8_msg_unpacked->probe_ID < 0 || pus8_msg_unpacked->probe_ID > 1)
-				return UNSUPPORTED_INDEX_ERROR; // There are only 2 sweep tables available in the FPGA RAM
+				return UNDEFINED_PARAM_ID; // There are only 2 sweep tables available in the FPGA RAM
 
 			uint8_t msg[64] = {0};
 			uint8_t msg_cnt = 0;
@@ -379,13 +356,13 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
 			msg[msg_cnt++] = FPGA_SET_CB_VOL_LVL;
 			msg[msg_cnt++] = pus8_msg_unpacked->probe_ID;
-			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->voltage_level))[0];
-			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->voltage_level))[1];
+			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->voltage_level))[0]; // MSB
+			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->voltage_level))[1]; // LSB
 			msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
 
 			if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100)!= HAL_OK) {
 				HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
-				return FPGA_MESSAGE_ERROR;
+				return DEV_CPDU_EXEC_FAIL;
 			}
 			break;
 		}
@@ -393,7 +370,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 		case FPGA_GET_CB_VOL_LVL:
 		{
 			if(pus8_msg_unpacked->probe_ID < 0 || pus8_msg_unpacked->probe_ID > 1)
-				return UNSUPPORTED_INDEX_ERROR; // There are only 2 sweep tables available in the FPGA RAM
+				return UNDEFINED_PARAM_ID; // There are only 2 sweep tables available in the FPGA RAM
 
 			uint8_t msg[64] = {0};
 			uint8_t msg_cnt = 0;
@@ -412,7 +389,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 
 			if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100)!= HAL_OK) {
 				HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
-				return FPGA_MESSAGE_ERROR;
+				return DEV_CPDU_EXEC_FAIL;
 			}
 
 			break;
@@ -431,7 +408,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 
 			if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100)!= HAL_OK) {
 				HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
-				return FPGA_MESSAGE_ERROR;
+				return DEV_CPDU_EXEC_FAIL;
 			}
 			break;
 		}
@@ -453,7 +430,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 
 			if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100)!= HAL_OK) {
 				HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
-				return FPGA_MESSAGE_ERROR;
+				return DEV_CPDU_EXEC_FAIL;
 			}
 
 			break;
@@ -467,13 +444,13 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
 			msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
 			msg[msg_cnt++] = FPGA_SET_SWT_SAMPLES_PER_STEP;
-			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_samples_per_step))[0];
-			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_samples_per_step))[1];
+			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_samples_per_step))[0]; // MSB
+			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_samples_per_step))[1]; // LSB
 			msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
 
 			if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100)!= HAL_OK) {
 				HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
-				return FPGA_MESSAGE_ERROR;
+				return DEV_CPDU_EXEC_FAIL;
 			}
 			break;
 		}
@@ -495,7 +472,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 
 			if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100)!= HAL_OK) {
 				HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
-				return FPGA_MESSAGE_ERROR;
+				return DEV_CPDU_EXEC_FAIL;
 			}
 
 			break;
@@ -509,13 +486,13 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
 			msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
 			msg[msg_cnt++] = FPGA_SET_SWT_SAMPLE_SKIP;
-			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_skip))[0];
-			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_skip))[1];
+			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_skip))[0]; // MSB
+			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_skip))[1]; // LSB
 			msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
 
 			if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100)!= HAL_OK) {
 				HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
-				return FPGA_MESSAGE_ERROR;
+				return DEV_CPDU_EXEC_FAIL;
 			}
 			break;
 		}
@@ -537,7 +514,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 
 			if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100)!= HAL_OK) {
 				HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
-				return FPGA_MESSAGE_ERROR;
+				return DEV_CPDU_EXEC_FAIL;
 			}
 
 			break;
@@ -551,13 +528,13 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
 			msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
 			msg[msg_cnt++] = FPGA_SET_SWT_SAMPLES_PER_POINT;
-			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_f))[0];
-			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_f))[1];
+			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_f))[0]; // MSB
+			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_f))[1]; // LSB
 			msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
 
 			if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100)!= HAL_OK) {
 				HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
-				return FPGA_MESSAGE_ERROR;
+				return DEV_CPDU_EXEC_FAIL;
 			}
 			break;
 		}
@@ -579,7 +556,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 
 			if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100)!= HAL_OK) {
 				HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
-				return FPGA_MESSAGE_ERROR;
+				return DEV_CPDU_EXEC_FAIL;
 			}
 
 			break;
@@ -593,13 +570,13 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
 			msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
 			msg[msg_cnt++] = FPGA_SET_SWT_NPOINTS;
-			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_points))[0];
-			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_points))[1];
+			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_points))[0]; // MSB
+			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_points))[1]; // LSB
 			msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
 
 			if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100)!= HAL_OK) {
 				HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
-				return FPGA_MESSAGE_ERROR;
+				return DEV_CPDU_EXEC_FAIL;
 			}
 			break;
 		}
@@ -621,7 +598,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 
 			if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100)!= HAL_OK) {
 				HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
-				return FPGA_MESSAGE_ERROR;
+				return DEV_CPDU_EXEC_FAIL;
 			}
 
 			break;
@@ -630,10 +607,10 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 		case CPY_TABLE_FRAM_TO_FPGA:
 		{
 			if(pus8_msg_unpacked->FRAM_Table_ID < 0 || pus8_msg_unpacked->FRAM_Table_ID > 7)
-				return UNSUPPORTED_INDEX_ERROR; // There are only 8 sweep tables available in the FRAM
+				return UNDEFINED_ID; // There are only 8 sweep tables available in the FRAM
 
 			if(pus8_msg_unpacked->probe_ID < 0 || pus8_msg_unpacked->probe_ID > 1)
-				return UNSUPPORTED_INDEX_ERROR; // There are only 2 sweep tables available in the FPGA RAM
+				return UNDEFINED_PARAM_ID; // There are only 2 sweep tables available in the FPGA RAM
 
 			uint8_t FRAM_Table_ID = pus8_msg_unpacked->FRAM_Table_ID;
 			uint8_t FPGA_Table_ID = pus8_msg_unpacked->probe_ID;
@@ -676,25 +653,6 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 		}
 
 
-		// case FPGA_SET_PERIOD_HK:
-		// {
-		// 	uint8_t msg[64] = {0};
-		// 	uint8_t msg_cnt = 0;
-
-		// 	msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-		// 	msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
-		// 	msg[msg_cnt++] = FPGA_SET_PERIOD_HK;
-		// 	msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->HK_PERIODIC_ID))[0];
-		// 	msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->HK_PERIOD_ID))[0];
-		// 	msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
-
-		// 	if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100)!= HAL_OK) {
-		// 		HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
-		// 		return FPGA_MESSAGE_ERROR;
-		// 	}
-		// 	break;
-		// }
-
 		default:
 			break;
 	}
@@ -708,24 +666,24 @@ TM_Err_Codes PUS_8_handle_FM_TC(SPP_header_t* SPP_header , PUS_TC_header_t* PUS_
 
 	if(data_size < 2)
 	{
-		return NOT_ENOUGH_DATA_ERROR;
+		return INVALID_PLENGTH;
 	}
 	if (Current_Global_Device_State != NORMAL_MODE)
 	{
 		if(Current_Global_Device_State != CB_MODE)
-			return WRONG_SYSTEM_STATE_ERROR;
+			return BAD_STATE;
 		else if(Current_Global_Device_State == CB_MODE && *data != FPGA_DIS_CB_MODE)
-			return WRONG_SYSTEM_STATE_ERROR;
+			return BAD_STATE;
 	}
 	if (SPP_header == NULL || PUS_TC_header == NULL) {
-		return NULL_POINTER_DEREFERENCING_ERROR;
+		return ILLEGAL_VERSION;
 	}
 
 	switch (PUS_TC_header->message_subtype_id) {
 		case FM_PERFORM_FUNCTION:
 			break;
 		default:
-			return UNSUPPORTED_SUBSERVICE_ID_ERROR;  // Invalid message subtype
+			return UNKNOWN_TYPE_SUBTYPE;  
 	}
 
 	PUS_1_send_succ_acc(SPP_header, PUS_TC_header);
@@ -737,7 +695,7 @@ TM_Err_Codes PUS_8_handle_FM_TC(SPP_header_t* SPP_header , PUS_TC_header_t* PUS_
 	pus8_msg_to_send.data_size = data_size;
 
 	if (xQueueSend(PUS_8_Queue, &pus8_msg_to_send, 0) != pdPASS) {
-		PUS_1_send_fail_comp(SPP_header, PUS_TC_header, PUS_PROCESS_BUSY_ERROR);
+		PUS_1_send_fail_comp(SPP_header, PUS_TC_header, BAD_STATE);
 	}
 
     return NO_ERROR;

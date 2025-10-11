@@ -5,6 +5,7 @@
  *      Author: Rūdolfs Arvīds Kalniņš <rakal@kth.se>
  */
 
+#include "General_Functions.h"
 #include "Space_Packet_Protocol.h"
 #include "PUS.h"
 #include "PUS_1_service.h"
