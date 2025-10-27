@@ -188,7 +188,6 @@ void PUS_1_send_fail_comp(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_h, uint16_t 
 		// The ACK FAIL message contains as data
     	// -> 4 bytes = the SPP header of the incoming request (without the data length field)
     	SPP_encode_header(SPP_h, msg_to_send.TM_data);
-
     	// -> 4 bytes = information about the failure
     	// here we overwrite the last 2 bytes written before because they store the data length of the SPP packet
     	// and that should not be included

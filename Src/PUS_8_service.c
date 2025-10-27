@@ -177,6 +177,7 @@ void PUS_8_copy_table_FRAM_to_FPGA(uint8_t fram_table_id, uint8_t fpga_table_id)
 
 TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC_h , PUS_8_msg_unpacked* pus8_msg_unpacked)
 {
+
 	switch(pus8_msg_unpacked->func_id)
 	{
 		case FPGA_SET_SWT_VOL_LVL:
@@ -654,7 +655,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 
 
 		default:
-			break;
+			return UNKNOWN_FUNCTION_ID; 
 	}
 
 	return NO_ERROR;

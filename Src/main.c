@@ -768,7 +768,7 @@ void handle_PUS_3_Service(void const * argument)
     uint32_t current_ticks = 0;
     // uint8_t periodic_report = 0;
     PUS_3_msg pus3_msg_received;
-    uint8_t result = NO_ERROR;
+    TM_Err_Codes result;
 
     /* Infinite loop */
     for(;;)
@@ -776,7 +776,7 @@ void handle_PUS_3_Service(void const * argument)
     		if (xQueueReceive(PUS_3_Queue, &pus3_msg_received, portMAX_DELAY) == pdPASS)
     		{
     			result = PUS_3_set_report_frequency(pus3_msg_received.data, &pus3_msg_received);
-
+          
     			if(result == NO_ERROR)
     			{
     				current_ticks = xTaskGetTickCount();
@@ -873,7 +873,7 @@ void handle_PUS_8_Service(void const * argument)
   /* Infinite loop */
 	PUS_8_msg pus8_msg_received;
 	PUS_8_msg_unpacked pus8_msg_unpacked;
-	uint8_t result;
+	TM_Err_Codes result;
 
 	for(;;)
 	{

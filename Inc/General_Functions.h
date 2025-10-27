@@ -19,9 +19,12 @@
 #include "queue.h"
 #include "main.h"
 
-typedef enum{
+// TODO: enum could save them as 32 bits, maybe better to clarify they are 16 bits. (Now it works even without)
+// typedef enum: uint16_t {
+typedef enum {
 
-	NO_ERROR                    = 0x0001,   
+
+	NO_ERROR                    = 0x0000,   
 
     // --- Generic CCSDS / PUS validation ---
     ILLEGAL_VERSION             = 0x0100, // Invalid CCSDS packet version

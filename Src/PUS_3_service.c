@@ -44,6 +44,7 @@ TM_Err_Codes PUS_3_set_report_frequency(uint8_t* data, PUS_3_msg* pus3_msg_recei
             SID == HK_ID_GYRO          ||
             SID == HK_ID_PRESSURE       )
         {
+        
             switch (pus3_msg_received->new_report_frequency) {
                 case 1: // 3.27 --> ONE SHOT
                 {
