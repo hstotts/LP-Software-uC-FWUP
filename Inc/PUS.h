@@ -49,6 +49,9 @@ typedef struct {
     uint32_t spare;
 } PUS_TM_header_t;
 
+typedef enum {
+    SC_BIAS          		= 0x09,
+} SC_ID;
 
 /* PUS */
 PUS_TM_header_t PUS_make_TM_header(uint8_t PUS_version_number,

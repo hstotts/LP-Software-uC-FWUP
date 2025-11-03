@@ -1084,6 +1084,26 @@ void handle_UART_IN_FPGA(void const * argument)
 						break;
 					}
 
+          case SC_BIAS:
+            {
+              if (PUS_8_check_FPGA_msg_format(UART_FPGA_Rx_Buffer, 12)) {
+
+                UART_FPGA_OBC_Tx_Buffer[0] = UART_FPGA_Rx_Buffer[3];
+                UART_FPGA_OBC_Tx_Buffer[1] = UART_FPGA_Rx_Buffer[4];
+                UART_FPGA_OBC_Tx_Buffer[2] = UART_FPGA_Rx_Buffer[5];
+                UART_FPGA_OBC_Tx_Buffer[3] = UART_FPGA_Rx_Buffer[6];
+                UART_FPGA_OBC_Tx_Buffer[4] = UART_FPGA_Rx_Buffer[7];
+                UART_FPGA_OBC_Tx_Buffer[5] = UART_FPGA_Rx_Buffer[8];
+                UART_FPGA_OBC_Tx_Buffer[6] = UART_FPGA_Rx_Buffer[9];
+                UART_FPGA_OBC_Tx_Buffer[7] = UART_FPGA_Rx_Buffer[10];
+
+                memcpy(msg_to_send.TM_data, UART_FPGA_OBC_Tx_Buffer, 8);
+
+                msg_to_send.TM_data_len = 8;
+              }
+              break;
+            }
+
 					case FPGA_GET_SENSOR_DATA:
           {
             if (PUS_8_check_FPGA_msg_format(UART_FPGA_Rx_Buffer, 12)) {
