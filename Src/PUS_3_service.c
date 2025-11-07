@@ -74,9 +74,9 @@ TM_Err_Codes PUS_3_set_report_frequency(uint8_t* data, PUS_3_msg* pus3_msg_recei
 
                     uint8_t T = *data_iterator;
                     data_iterator++;
-                    if (T < HK_T_DISABLE || T > HK_T_FAST) {
-                        return HK_INVALID_COLL_INT;
-                    }
+                    // if (T < HK_T_DISABLE || T > HK_T_FAST) {
+                    //     return HK_INVALID_COLL_INT;
+                    // }
 
                     uint8_t msg[64] = {0};
                     uint8_t msg_cnt = 0;
@@ -86,6 +86,26 @@ TM_Err_Codes PUS_3_set_report_frequency(uint8_t* data, PUS_3_msg* pus3_msg_recei
                     msg[msg_cnt++] = FPGA_SET_PERIOD; // F2
                     msg[msg_cnt++] = SID; // HK_ID
                     msg[msg_cnt++] = T;
+                    msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
+
+                    memset(UART_FPGA_Rx_Buffer, 0, sizeof(UART_FPGA_Rx_Buffer));
+
+                    if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100) != HAL_OK) {
+                        HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
+                        return DEV_CPDU_EXEC_FAIL;
+                    }
+                    break;
+                }
+                case 3: // 3.33 --> GET PERIOD
+                {
+
+                    uint8_t msg[64] = {0};
+                    uint8_t msg_cnt = 0;
+
+                    msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
+                    msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+                    msg[msg_cnt++] = FPGA_GET_PERIOD; // E9
+                    msg[msg_cnt++] = SID; // HK_ID
                     msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
 
                     memset(UART_FPGA_Rx_Buffer, 0, sizeof(UART_FPGA_Rx_Buffer));
@@ -134,6 +154,9 @@ TM_Err_Codes PUS_3_handle_HK_TC(SPP_header_t* SPP_header , PUS_TC_header_t* PUS_
             break;
         case HK_SET_PERIOD:
             report_frequency = 2;
+            break;
+        case HK_GET_PERIOD:
+            report_frequency = 3;
             break;
         default:
             return HK_INVALID_SID;  

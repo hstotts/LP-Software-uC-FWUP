@@ -28,12 +28,12 @@
 #define FPGA_MSG_POSTAMBLE      0x0A
 
 
-typedef enum {
-    HK_T_DISABLE   	= 0,
-    HK_T_SLOW    	= 1,
-    HK_T_MED        = 2,
-    HK_T_FAST      	= 3
-} T_ID;
+// typedef enum {
+//     HK_T_DISABLE   	= 0,
+//     HK_T_SLOW    	= 1,
+//     HK_T_MED        = 2,
+//     HK_T_FAST      	= 3
+// } T_ID;
 
 typedef enum {
     HK_ID_ACCELEROMETER   = 0x01,
@@ -45,6 +45,7 @@ typedef enum {
 typedef enum {
 	FPGA_GET_SENSOR_DATA			= 0xF9, 
     FPGA_SET_PERIOD                 = 0xF2,
+    FPGA_GET_PERIOD                 = 0xE9,
 } PUS_3_Func_ID;
 
 typedef struct {

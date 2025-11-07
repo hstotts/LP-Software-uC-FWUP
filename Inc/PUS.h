@@ -27,6 +27,8 @@ typedef enum {
     HK_PARAMETER_REPORT                    = 25, // TM
     HK_ONE_SHOT                            = 27, // TC
     HK_SET_PERIOD                          = 31, // TC
+    HK_GET_PERIOD                          = 33, // TC
+
 } PUS_HK_Subtype_ID;
 
 typedef struct {

@@ -385,8 +385,8 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			memset(UART_FPGA_Rx_Buffer, 0, sizeof(UART_FPGA_Rx_Buffer));
 			memset(UART_FPGA_OBC_Tx_Buffer, 0, sizeof(UART_FPGA_OBC_Tx_Buffer));
 
-			UART_FPGA_OBC_Tx_Buffer[0] = FPGA_GET_CB_VOL_LVL;
-			UART_FPGA_OBC_Tx_Buffer[1] = pus8_msg_unpacked->probe_ID;
+			//UART_FPGA_OBC_Tx_Buffer[0] = FPGA_GET_CB_VOL_LVL;
+			//UART_FPGA_OBC_Tx_Buffer[1] = pus8_msg_unpacked->probe_ID;
 
 			if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100)!= HAL_OK) {
 				HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
