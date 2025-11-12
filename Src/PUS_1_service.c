@@ -202,3 +202,14 @@ void PUS_1_send_fail_comp(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_h, uint16_t 
     }
 }
 
+
+void PUS_1_debug(uint8_t *buffer)
+{
+    UART_OUT_OBC_msg msg_to_send = {0};
+    msg_to_send.PUS_HEADER_PRESENT = 0;
+
+    memcpy(msg_to_send.TM_data, buffer, 12);
+    msg_to_send.TM_data_len = 12;
+
+    xQueueSend(UART_OBC_Out_Queue, &msg_to_send, portMAX_DELAY);
+}

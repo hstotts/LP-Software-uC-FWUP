@@ -34,11 +34,11 @@ extern UART_HandleTypeDef huart5;
 
 extern osThreadId PUS_3_TaskHandle;
 extern osThreadId Watchdog_TaskHandle;
+extern osThreadId UART_FPGA_INHandle;
 
 extern volatile uint8_t Sweep_Bias_Mode_Data[3072];
 extern volatile uint16_t Sweep_Bias_Data_counter;
 extern volatile uint16_t Old_Sweep_Bias_Data_counter;
-
 
 // This queue is used to receive info from the UART handler task
 QueueHandle_t PUS_8_Queue;
@@ -342,6 +342,8 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 				return DEV_CPDU_EXEC_FAIL;
 			}
 
+			// CB flush
+			osSignalSet(UART_FPGA_INHandle, 0x04);
 			break;
 		}
 
