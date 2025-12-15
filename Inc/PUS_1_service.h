@@ -38,5 +38,9 @@ void PUS_1_send_succ_prog (SPP_header_t* SPP_h, PUS_TC_header_t* PUS_h);
 void PUS_1_send_fail_prog (SPP_header_t* SPP_h, PUS_TC_header_t* PUS_h, uint16_t err_code);
 void PUS_1_send_succ_comp (SPP_header_t* SPP_h, PUS_TC_header_t* PUS_h);
 void PUS_1_send_fail_comp (SPP_header_t* SPP_h, PUS_TC_header_t* PUS_h, uint16_t err_code);
+void PUS_1_debug(uint8_t *buffer);
+void PUS_1_empty_debug();
+void PUS_1_debug_byte(uint8_t b);
+void PUS_1_debug_uint32(uint32_t value, uint8_t id);
 
 #endif /* PUS_1_SERVICE_H_ */

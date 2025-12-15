@@ -213,3 +213,57 @@ void PUS_1_debug(uint8_t *buffer)
 
     xQueueSend(UART_OBC_Out_Queue, &msg_to_send, portMAX_DELAY);
 }
+void PUS_1_empty_debug()
+{
+    UART_OUT_OBC_msg msg_to_send = {0};
+
+    msg_to_send.PUS_HEADER_PRESENT = 0;
+	uint8_t a = 0xAA;
+	uint8_t b = 0xBB;
+    msg_to_send.TM_data[0] = a;
+    msg_to_send.TM_data[1] = b;
+    msg_to_send.TM_data_len = 2;
+
+    xQueueSend(UART_OBC_Out_Queue, &msg_to_send, portMAX_DELAY);
+}
+void PUS_1_debug_byte(uint8_t b)
+{
+    UART_OUT_OBC_msg msg_to_send = {0};
+    msg_to_send.PUS_HEADER_PRESENT = 0;
+
+    msg_to_send.TM_data[0] = b;
+    msg_to_send.TM_data_len = 1;
+
+    xQueueSend(UART_OBC_Out_Queue, &msg_to_send, portMAX_DELAY);
+}
+
+void PUS_1_debug_uint32(uint32_t value, uint8_t id)
+{
+    UART_OUT_OBC_msg msg_to_send = {0};
+    msg_to_send.PUS_HEADER_PRESENT = 0;
+
+    msg_to_send.TM_data[0] = id;
+    msg_to_send.TM_data[1] = id;
+    msg_to_send.TM_data[2] = (value >> 24) & 0xFF;
+    msg_to_send.TM_data[3] = (value >> 16) & 0xFF;
+    msg_to_send.TM_data[4] = (value >> 8) & 0xFF;
+    msg_to_send.TM_data[5] = value & 0xFF;
+    msg_to_send.TM_data[6] = id;
+    msg_to_send.TM_data[7] = id;
+
+
+    msg_to_send.TM_data_len = 8;
+
+    xQueueSend(UART_OBC_Out_Queue, &msg_to_send, portMAX_DELAY);
+}
+
+// // TASKS STACK SIZE DEBUG // // 
+// static uint32_t counter = 0;
+// counter++;
+// if (counter % 1000 == 0)  
+// {
+// 	UBaseType_t wm_words = uxTaskGetStackHighWaterMark(NULL);
+// 	g_UART_FPGA_IN_stack_wm = wm_words;
+// 	// PUS_1_debug_uint32((uint32_t)wm_words,0xBB);
+// }
+// //END

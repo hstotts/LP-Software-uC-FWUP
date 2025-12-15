@@ -73,6 +73,7 @@ osThreadId UART_OBC_INHandle;
 osThreadId PUS_8_TaskHandle;
 osThreadId UART_OBC_OUTHandle;
 osThreadId UART_FPGA_INHandle;
+osThreadId FPGA_DispatcherHandle;
 osThreadId Watchdog_TaskHandle;
 /* USER CODE BEGIN PV */
 
@@ -86,7 +87,6 @@ osThreadId Watchdog_TaskHandle;
 #define SWEEP_MODE_DATA_SIZE_TO_READ SWEEP_MODE_ROWS_TO_READ * SWEEP_MODE_MEASUREMENT_BYTE_SIZE * sizeof(uint8_t)
 
 #define UART_MAX_RETRIES 3
-#define CB_MODE_BUFFERED_MEASUREMENTS 40
 
 
 uint16_t HK_SPP_APP_ID = 0;  
@@ -95,6 +95,7 @@ uint16_t HK_PUS_SOURCE_ID = 0;
 extern QueueHandle_t UART_OBC_Out_Queue;
 extern QueueHandle_t PUS_3_Queue;
 extern QueueHandle_t PUS_8_Queue;
+extern QueueHandle_t FPGA_IN_Queue;
 
 extern volatile uint8_t uart_tx_OBC_done;
 extern volatile uint8_t uart_tx_FPGA_done;
@@ -109,13 +110,7 @@ extern volatile uint8_t UART_TxBuffer[MAX_COBS_FRAME_LEN];
 
 DeviceState Current_Global_Device_State = NORMAL_MODE;
 
-volatile uint8_t Sweep_Bias_Mode_Data[3072];
-uint8_t Constant_Bias_Mode_Buffer[2][CB_MODE_BUFFERED_MEASUREMENTS*8];
-uint8_t Buffer_Index = 0;
-uint8_t Measurement_Index = 0;
-uint8_t send_buffered_data;
-uint16_t cb_expected_fpga_cnt = 0;
-uint8_t  cb_cnt_valid = 0; 
+volatile uint8_t Sweep_Bias_Mode_Data[3072]; 
 
 volatile uint16_t Sweep_Bias_Data_counter = 0;
 volatile uint16_t Old_Sweep_Bias_Data_counter = 0;
@@ -136,6 +131,7 @@ void handle_UART_IN_OBC(void const * argument);
 void handle_PUS_8_Service(void const * argument);
 void handle_UART_OUT_OBC(void const * argument);
 void handle_UART_IN_FPGA(void const * argument);
+void handle_FPGA_Dispatcher(void const * argument);
 void handle_Watchdog(void const * argument);
 
 static void MX_NVIC_Init(void);
@@ -175,9 +171,12 @@ int main(void)
   // thus allowing for a proper analysis of the system state (ex: science data buffer)
   __HAL_DBGMCU_FREEZE_IWDG();
 
+  FPGA_IN_Queue      = xQueueCreate(128, sizeof(FPGA_IN_Msg_t)); 
   UART_OBC_Out_Queue = xQueueCreate(1, sizeof(UART_OUT_OBC_msg));
   PUS_3_Queue = xQueueCreate(1, sizeof(PUS_3_msg));
   PUS_8_Queue = xQueueCreate(1, sizeof(PUS_8_msg));
+
+
   Current_Global_Device_State = NORMAL_MODE;
   /* USER CODE END Init */
 
@@ -240,8 +239,12 @@ int main(void)
   UART_OBC_OUTHandle = osThreadCreate(osThread(UART_OBC_OUT), NULL);
 
   /* definition and creation of UART_FPGA_IN */
-  osThreadDef(UART_FPGA_IN, handle_UART_IN_FPGA, osPriorityHigh, 0, 1024);
+  osThreadDef(UART_FPGA_IN, handle_UART_IN_FPGA, osPriorityHigh, 0, 512);
   UART_FPGA_INHandle = osThreadCreate(osThread(UART_FPGA_IN), NULL);
+
+  /* definition and creation of FPGA_Dispatcher */
+  osThreadDef(FPGA_Dispatcher, handle_FPGA_Dispatcher, osPriorityAboveNormal, 0, 512);
+  FPGA_DispatcherHandle = osThreadCreate(osThread(FPGA_Dispatcher), NULL);
 
   /* definition and creation of Watchdog_Task */
   osThreadDef(Watchdog_Task, handle_Watchdog, osPriorityLow, 0, 128);
@@ -946,14 +949,13 @@ void handle_UART_IN_FPGA(void const * argument)
 {
   /* USER CODE BEGIN handle_UART_IN_FPGA */
 
-	HAL_UART_Receive_DMA(&huart5, UART_FPGA_Rx_Buffer, 2 + 9 + 1);
-  PUS_1_debug(UART_FPGA_Rx_Buffer);
+	HAL_UART_Receive_DMA(&huart5, UART_FPGA_Rx_Buffer, FPGA_FRAME_LEN);
   static uint8_t realign_len = 0;
 
   /* Infinite loop */
   for(;;)
   {
-	osEvent evt = osSignalWait(0x06, osWaitForever);
+	osEvent evt = osSignalWait(0x06, osWaitForever); 
 
 		if (evt.status == osEventSignal)
 		{
@@ -962,10 +964,10 @@ void handle_UART_IN_FPGA(void const * argument)
 
         if (realign_len > 0) // if there has been a realignement, check again
         { 
-          if (!PUS_8_check_FPGA_msg_format(UART_FPGA_Rx_Buffer, 12)) // reset and restart
+          if (!PUS_8_check_FPGA_msg_format(UART_FPGA_Rx_Buffer, FPGA_FRAME_LEN)) // reset and restart
           { 
             realign_len = 0;
-            HAL_UART_Receive_DMA(&huart5, UART_FPGA_Rx_Buffer, 12);
+            HAL_UART_Receive_DMA(&huart5, UART_FPGA_Rx_Buffer, FPGA_FRAME_LEN);
             continue;
           }
           // if it's valid I go to switch case
@@ -973,10 +975,10 @@ void handle_UART_IN_FPGA(void const * argument)
         }
         else  // if no realignement happened
         {
-          if (!PUS_8_check_FPGA_msg_format(UART_FPGA_Rx_Buffer, 12)) // start realignment
+          if (!PUS_8_check_FPGA_msg_format(UART_FPGA_Rx_Buffer, FPGA_FRAME_LEN)) // start realignment
           {
             int start = -1;
-            for (int i = 0; i < 11; i++) // search position of preamble
+            for (int i = 0; i < FPGA_FRAME_LEN-1; i++) // search position of preamble
             {
               if (UART_FPGA_Rx_Buffer[i] == FPGA_MSG_PREMABLE_0 && UART_FPGA_Rx_Buffer[i + 1] == FPGA_MSG_PREMABLE_1)
               {
@@ -987,225 +989,39 @@ void handle_UART_IN_FPGA(void const * argument)
             
             if (start >= 0) // preamble found, shift and fill buffer
             { 
-              uint8_t good = 12 - start;
+              uint8_t good = FPGA_FRAME_LEN - start;
               memmove(UART_FPGA_Rx_Buffer, UART_FPGA_Rx_Buffer + start, good);
-              HAL_UART_Receive_DMA(&huart5, UART_FPGA_Rx_Buffer + good, 12 - good);
+              HAL_UART_Receive_DMA(&huart5, UART_FPGA_Rx_Buffer + good, FPGA_FRAME_LEN - good);
               realign_len = good;
               continue;
             } 
             else // preamble not found
             { 
               // special scenario: if last byte is first preamble, shift of 1 byte
-              if (UART_FPGA_Rx_Buffer[11] == FPGA_MSG_PREMABLE_0)
+              if (UART_FPGA_Rx_Buffer[FPGA_FRAME_LEN-1] == FPGA_MSG_PREMABLE_0)
               {
-                UART_FPGA_Rx_Buffer[0] = UART_FPGA_Rx_Buffer[11];
-                HAL_UART_Receive_DMA(&huart5, UART_FPGA_Rx_Buffer + 1, 11);
+                UART_FPGA_Rx_Buffer[0] = UART_FPGA_Rx_Buffer[FPGA_FRAME_LEN-1];
+                HAL_UART_Receive_DMA(&huart5, UART_FPGA_Rx_Buffer + 1, FPGA_FRAME_LEN-1);
                 realign_len = 1;
                 continue;
               }
-              HAL_UART_Receive_DMA(&huart5, UART_FPGA_Rx_Buffer, 12);
+              HAL_UART_Receive_DMA(&huart5, UART_FPGA_Rx_Buffer, FPGA_FRAME_LEN);
               realign_len = 0;
               continue;
             }
           }
         }
 
-        UART_OUT_OBC_msg msg_to_send = (UART_OUT_OBC_msg){0};
-        msg_to_send.PUS_HEADER_PRESENT = 0;
 
-				switch(UART_FPGA_Rx_Buffer[2])
-				{
-					case FPGA_GET_CB_VOL_LVL:
-					{
+        FPGA_IN_Msg_t msg = {0};
+        memcpy(msg.data, UART_FPGA_Rx_Buffer, FPGA_FRAME_LEN);
 
-            UART_FPGA_OBC_Tx_Buffer[0] = FPGA_GET_CB_VOL_LVL;
-            UART_FPGA_OBC_Tx_Buffer[1] = UART_FPGA_Rx_Buffer[3];
-            UART_FPGA_OBC_Tx_Buffer[2] = UART_FPGA_Rx_Buffer[4];
-            UART_FPGA_OBC_Tx_Buffer[3] = UART_FPGA_Rx_Buffer[5];
-            memcpy(msg_to_send.TM_data, UART_FPGA_OBC_Tx_Buffer, 4);
-            msg_to_send.TM_data_len			= 4;
-      
-						break;
-					}
+        xQueueSend(FPGA_IN_Queue, &msg, 0);
+        HAL_UART_Receive_DMA(&huart5, UART_FPGA_Rx_Buffer, FPGA_FRAME_LEN);
+      } 
 
-					case FPGA_GET_SWT_VOL_LVL:
-					{
-
-            UART_FPGA_OBC_Tx_Buffer[0] = FPGA_GET_SWT_VOL_LVL;
-            UART_FPGA_OBC_Tx_Buffer[1] = UART_FPGA_Rx_Buffer[3];
-            UART_FPGA_OBC_Tx_Buffer[2] = UART_FPGA_Rx_Buffer[4];
-            UART_FPGA_OBC_Tx_Buffer[3] = UART_FPGA_Rx_Buffer[5];
-            UART_FPGA_OBC_Tx_Buffer[4] = UART_FPGA_Rx_Buffer[6];
-            memcpy(msg_to_send.TM_data, UART_FPGA_OBC_Tx_Buffer, 5);
-            msg_to_send.TM_data_len			= 5;
-          
-						break;
-					}
-
-					case FPGA_GET_SWT_STEPS:
-					{
-         
-            UART_FPGA_OBC_Tx_Buffer[0] = FPGA_GET_SWT_STEPS;
-            UART_FPGA_OBC_Tx_Buffer[1] = UART_FPGA_Rx_Buffer[3];
-            memcpy(msg_to_send.TM_data, UART_FPGA_OBC_Tx_Buffer, 2);
-            msg_to_send.TM_data_len			= 2;
-          
-						break;
-					}
-
-					case FPGA_GET_SWT_SAMPLES_PER_STEP:
-					{
-
-            UART_FPGA_OBC_Tx_Buffer[0] = FPGA_GET_SWT_SAMPLES_PER_STEP;
-            UART_FPGA_OBC_Tx_Buffer[1] = UART_FPGA_Rx_Buffer[3];
-            UART_FPGA_OBC_Tx_Buffer[2] = UART_FPGA_Rx_Buffer[4];
-            memcpy(msg_to_send.TM_data, UART_FPGA_OBC_Tx_Buffer, 3);
-            msg_to_send.TM_data_len			= 3;
-
-						break;
-					}
-
-					case FPGA_GET_SWT_SAMPLE_SKIP:
-					{
-
-            UART_FPGA_OBC_Tx_Buffer[0] = FPGA_GET_SWT_SAMPLE_SKIP;
-            UART_FPGA_OBC_Tx_Buffer[1] = UART_FPGA_Rx_Buffer[3];
-            UART_FPGA_OBC_Tx_Buffer[2] = UART_FPGA_Rx_Buffer[4];
-            memcpy(msg_to_send.TM_data, UART_FPGA_OBC_Tx_Buffer, 3);
-            msg_to_send.TM_data_len			= 3;
-          
-						break;
-					}
-
-					case FPGA_GET_SWT_SAMPLES_PER_POINT:
-					{
-
-            UART_FPGA_OBC_Tx_Buffer[0] = FPGA_GET_SWT_SAMPLES_PER_POINT;
-            UART_FPGA_OBC_Tx_Buffer[1] = UART_FPGA_Rx_Buffer[3];
-            UART_FPGA_OBC_Tx_Buffer[2] = UART_FPGA_Rx_Buffer[4];
-            memcpy(msg_to_send.TM_data, UART_FPGA_OBC_Tx_Buffer, 3);
-            msg_to_send.TM_data_len			= 3;
-          
-						break;
-					}
-
-					case FPGA_GET_SWT_NPOINTS:
-					{
-
-            UART_FPGA_OBC_Tx_Buffer[0] = FPGA_GET_SWT_NPOINTS;
-            UART_FPGA_OBC_Tx_Buffer[1] = UART_FPGA_Rx_Buffer[3];
-            UART_FPGA_OBC_Tx_Buffer[2] = UART_FPGA_Rx_Buffer[4];
-            memcpy(msg_to_send.TM_data, UART_FPGA_OBC_Tx_Buffer, 3);
-            msg_to_send.TM_data_len			= 3;
-          
-						break;
-					}
-
-
-
-          case SC_BIAS:
-          {
-            send_buffered_data = 0;
-
-            uint16_t fpga_cnt = ((uint16_t)UART_FPGA_Rx_Buffer[3] << 8) | (uint16_t)UART_FPGA_Rx_Buffer[4];
-            uint8_t *buf = Constant_Bias_Mode_Buffer[Buffer_Index];
-
-            if (!cb_cnt_valid)
-            {
-              buf[0] = UART_FPGA_Rx_Buffer[3];
-              buf[1] = UART_FPGA_Rx_Buffer[4];
-              cb_expected_fpga_cnt = fpga_cnt;
-              cb_cnt_valid = 1;
-              Measurement_Index = 0;
-            }
-            else
-            {
-              uint16_t expected_next = (uint16_t)(cb_expected_fpga_cnt + Measurement_Index);
-
-              if (fpga_cnt != expected_next)
-              {
-                msg_to_send.TM_data[0] = SC_BIAS;
-                memcpy(msg_to_send.TM_data + 1, buf, 2 + 6 * Measurement_Index);
-                msg_to_send.TM_data_len = 1 + 2 + 6 * Measurement_Index;
-
-                // send data and switch buffer
-                send_buffered_data = 1;
-                Buffer_Index ^= 1;
-                Measurement_Index = 0;
-
-                // save counter in new buffer
-                buf = Constant_Bias_Mode_Buffer[Buffer_Index];
-                buf[0] = UART_FPGA_Rx_Buffer[3];
-                buf[1] = UART_FPGA_Rx_Buffer[4];
-                cb_expected_fpga_cnt = fpga_cnt;
-                cb_cnt_valid = 1;
-              }
-            }
-            
-            // save data in buffer
-            uint8_t *dest = buf + 2 + (Measurement_Index * 6);
-            memcpy(dest, UART_FPGA_Rx_Buffer + 5, 6);
-            Measurement_Index++;
-      
-            if (Measurement_Index == CB_MODE_BUFFERED_MEASUREMENTS)
-            {
-              msg_to_send.TM_data[0] = SC_BIAS;
-              memcpy(msg_to_send.TM_data + 1, buf, 2 + 6 * CB_MODE_BUFFERED_MEASUREMENTS);
-              msg_to_send.TM_data_len = 1 + 2 + 6 * CB_MODE_BUFFERED_MEASUREMENTS;
-
-              send_buffered_data = 1;
-              Measurement_Index = 0;
-              cb_cnt_valid = 0;    
-              Buffer_Index ^= 1;
-            }
-            
-            break;
-          }
-
-					case FPGA_GET_SENSOR_DATA:
-          {
-
-            msg_to_send.PUS_HEADER_PRESENT = 1;
-            msg_to_send.SERVICE_ID = HOUSEKEEPING_SERVICE_ID;   
-            msg_to_send.SUBTYPE_ID = HK_PARAMETER_REPORT;       
-
-            msg_to_send.TM_data[0] = UART_FPGA_Rx_Buffer[3]; // HK ID 
-
-            memcpy(&msg_to_send.TM_data[1], &UART_FPGA_Rx_Buffer[4], 7);
-
-            msg_to_send.TM_data_len = 8;
-          
-            break;
-          }
-
-					case FPGA_GET_PERIOD:
-          {
-            msg_to_send.PUS_HEADER_PRESENT = 1;
-            msg_to_send.SERVICE_ID = HOUSEKEEPING_SERVICE_ID;   
-            msg_to_send.SUBTYPE_ID = HK_PARAMETER_REPORT;       
-
-            msg_to_send.TM_data[0] = UART_FPGA_Rx_Buffer[3]; // HK ID 
-
-            memcpy(&msg_to_send.TM_data[1], &UART_FPGA_Rx_Buffer[4], 1);
-
-            msg_to_send.TM_data_len = 2;
-          
-            break;
-          }
-
-					default:
-						break;
-				}
-
-				if(UART_FPGA_Rx_Buffer[2] != SC_BIAS ||
-					(UART_FPGA_Rx_Buffer[2] == SC_BIAS && send_buffered_data == 1))
-				{
-          xQueueSend(UART_OBC_Out_Queue, &msg_to_send, portMAX_DELAY);
-        }
-				HAL_UART_Receive_DMA(&huart5, UART_FPGA_Rx_Buffer, 2 + 9 + 1);
-			}
-
-      if (evt.value.signals & 0x04) { // CB flush requested -- DISABLE CB 
+      if (evt.value.signals & 0x04)
+      { // CB flush requested -- DISABLE CB 
 
         if (Measurement_Index > 0)
         {
@@ -1222,14 +1038,55 @@ void handle_UART_IN_FPGA(void const * argument)
 
           Measurement_Index = 0;
           cb_cnt_valid = 0;
+
+
         }
 
+        HAL_UART_AbortReceive(&huart5);
+        __HAL_UART_CLEAR_FLAG(&huart5, UART_FLAG_ORE);
+        __HAL_UART_CLEAR_FLAG(&huart5, UART_FLAG_NE);
+        __HAL_UART_CLEAR_FLAG(&huart5, UART_FLAG_FE);
+
+        realign_len = 0; 
+				memset(UART_FPGA_Rx_Buffer, 0, sizeof(UART_FPGA_Rx_Buffer));
+				memset(UART_FPGA_OBC_Tx_Buffer, 0, sizeof(UART_FPGA_OBC_Tx_Buffer));
+
+        if (HAL_UART_Receive_DMA(&huart5, UART_FPGA_Rx_Buffer, FPGA_FRAME_LEN) != HAL_OK) {
+          HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
+        }        
       }
 		}
 	osDelay(1);
   }
   /* USER CODE END handle_UART_IN_FPGA */
 }
+
+
+/* USER CODE BEGIN Header_handle_FPGA_Dispatcher */
+/**
+* @brief Function implementing the FPGA_Dispatcher thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_handle_FPGA_Dispatcher */
+void handle_FPGA_Dispatcher(void const * argument)
+{
+  /* USER CODE BEGIN handle_FPGA_Dispatcher */
+
+  FPGA_IN_Msg_t msg;
+
+  /* Infinite loop */
+  for (;;)
+  {
+    if (xQueueReceive(FPGA_IN_Queue, &msg, portMAX_DELAY) == pdPASS)
+    {
+      FPGA_process_frame(msg.data);
+    }    
+    osDelay(1);
+  }
+  /* USER CODE END handle_FPGA_Dispatcher */
+}
+
 
 /* USER CODE BEGIN Header_handle_Watchdog */
 /**

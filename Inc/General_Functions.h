@@ -19,6 +19,17 @@
 #include "queue.h"
 #include "main.h"
 
+#define CB_MODE_BUFFERED_MEASUREMENTS 40
+#define FPGA_FRAME_LEN 12
+
+extern uint8_t Constant_Bias_Mode_Buffer[2][CB_MODE_BUFFERED_MEASUREMENTS*8];
+extern uint8_t Buffer_Index;
+extern uint8_t Measurement_Index;
+extern uint8_t send_buffered_data;
+extern uint16_t cb_expected_fpga_cnt;
+extern uint8_t cb_cnt_valid;
+
+
 // TODO: enum could save them as 32 bits, maybe better to clarify they are 16 bits. (Now it works even without)
 // typedef enum: uint16_t {
 typedef enum {
@@ -65,6 +76,12 @@ typedef enum {
 } TM_Err_Codes;
 
 typedef struct {
+    //uint8_t len;       
+    uint8_t data[FPGA_FRAME_LEN]; 
+} FPGA_IN_Msg_t;
+
+
+typedef struct {
 	uint8_t PUS_HEADER_PRESENT;
 	uint16_t PUS_SOURCE_ID;
 	uint8_t SERVICE_ID;
@@ -88,6 +105,7 @@ void Prepare_full_msg(SPP_header_t* resp_SPP_header,
 						uint8_t* OUT_full_msg,
 						uint16_t* OUT_full_msg_len );
 
+void FPGA_process_frame(const uint8_t *frame);
 void Handle_incoming_TC();
 
 #endif /* GENERAL_FUNCTIONS_H_ */
