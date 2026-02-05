@@ -23,8 +23,8 @@
 #define DEF_FPGA_N1         2
 #define DEF_FPGA_PS         0
 
-#define FPGA_MSG_PREMABLE_0     0xB5
-#define FPGA_MSG_PREMABLE_1     0x43
+#define FPGA_MSG_PREAMBLE_0     0xB5
+#define FPGA_MSG_PREAMBLE_1     0x43
 #define FPGA_MSG_POSTAMBLE      0x0A
 
 
@@ -53,11 +53,10 @@ typedef struct {
 	PUS_TC_header_t PUS_TC_header;
 	uint8_t data[PUS_3_MAX_DATA_LEN];
 	uint8_t data_size;
-	uint8_t new_report_frequency;
 } PUS_3_msg;
 
 /* PUS_3_service */
-TM_Err_Codes PUS_3_set_report_frequency(uint8_t* data, PUS_3_msg* pus3_msg_received);
+TM_Err_Codes PUS_3_perform_HK(uint8_t* data, PUS_3_msg* pus3_msg_received);
 TM_Err_Codes PUS_3_handle_HK_TC(SPP_header_t* primary_header, PUS_TC_header_t* secondary_header, uint8_t* data, uint8_t data_size);
 
 #endif /* PUS_3_SERVICE_H_ */

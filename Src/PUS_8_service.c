@@ -14,12 +14,12 @@
 #include "PUS_8_service.h"
 #include "FRAM.h"
 
-#define FPGA_MSG_PREMABLE_0     0xB5
-#define FPGA_MSG_PREMABLE_1     0x43
+#define FPGA_MSG_PREAMBLE_0     0xB5
+#define FPGA_MSG_PREAMBLE_1     0x43
 #define FPGA_MSG_POSTAMBLE      0x0A
 
-#define LANGMUIR_READBACK_PREMABLE_0    FPGA_MSG_PREMABLE_0
-#define LANGMUIR_READBACK_PREMABLE_1    FPGA_MSG_PREMABLE_1
+#define LANGMUIR_READBACK_PREAMBLE_0    FPGA_MSG_PREAMBLE_0
+#define LANGMUIR_READBACK_PREAMBLE_1    FPGA_MSG_PREAMBLE_1
 #define LANGMUIR_READBACK_POSTAMBLE     FPGA_MSG_POSTAMBLE
 
 #define SCIENTIFIC_DATA_PREAMBLE        0x83
@@ -50,8 +50,8 @@ volatile uint8_t uart_tx_FPGA_done = 1;
  
 bool PUS_8_check_FPGA_msg_format(uint8_t* msg, uint8_t msg_len) {
     bool result = false;
-    if (msg[0] == LANGMUIR_READBACK_PREMABLE_0) {
-        if (msg[1] == LANGMUIR_READBACK_PREMABLE_1) {
+    if (msg[0] == LANGMUIR_READBACK_PREAMBLE_0) {
+        if (msg[1] == LANGMUIR_READBACK_PREAMBLE_1) {
             if (msg[(msg_len - 1)] == LANGMUIR_READBACK_POSTAMBLE) {
                 result = true;
             }
@@ -153,8 +153,8 @@ TM_Err_Codes PUS_8_unpack_msg(PUS_8_msg *pus8_msg_received, PUS_8_msg_unpacked* 
 void PUS_8_copy_table_FRAM_to_FPGA(uint8_t fram_table_id, uint8_t fpga_table_id) {
 
     uint8_t msg[64] = {0};
-	msg[0] = FPGA_MSG_PREMABLE_0;
-	msg[1] = FPGA_MSG_PREMABLE_1;
+	msg[0] = FPGA_MSG_PREAMBLE_0;
+	msg[1] = FPGA_MSG_PREAMBLE_1;
 	msg[2] = FPGA_SET_SWT_VOL_LVL;
 	msg[3] = fpga_table_id;
 	msg[7] = FPGA_MSG_POSTAMBLE;
@@ -199,8 +199,8 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 				uint8_t msg[64] = {0};
 				uint8_t msg_cnt = 0;
 
-				msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-				msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+				msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;
+				msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;
 				msg[msg_cnt++] = FPGA_SET_SWT_VOL_LVL;
 				msg[msg_cnt++] = pus8_msg_unpacked->probe_ID;
 				msg[msg_cnt++] = pus8_msg_unpacked->step_ID;
@@ -250,8 +250,8 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 				uint8_t msg[64] = {0};
 				uint8_t msg_cnt = 0;
 
-				msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-				msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+				msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;
+				msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;
 				msg[msg_cnt++] = FPGA_GET_SWT_VOL_LVL;
 				msg[msg_cnt++] = pus8_msg_unpacked->probe_ID;
 				msg[msg_cnt++] = pus8_msg_unpacked->step_ID;
@@ -277,8 +277,8 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 //			Current_Global_Device_State = CB_MODE;
 			uint8_t msg[64] = {0};
 			uint8_t msg_cnt = 0;
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;
 			msg[msg_cnt++] = FPGA_SWT_ACTIVATE_SWEEP;
 			msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
 
@@ -308,8 +308,8 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			uint8_t msg[64] = {0};
 			uint8_t msg_cnt = 0;
 
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;
 			msg[msg_cnt++] = FPGA_EN_CB_MODE;
 			msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
 
@@ -332,8 +332,8 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			uint8_t msg[64] = {0};
 			uint8_t msg_cnt = 0;
 
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;
 			msg[msg_cnt++] = FPGA_DIS_CB_MODE;
 			msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
 
@@ -355,8 +355,8 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			uint8_t msg[64] = {0};
 			uint8_t msg_cnt = 0;
 
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;
 			msg[msg_cnt++] = FPGA_SET_CB_VOL_LVL;
 			msg[msg_cnt++] = pus8_msg_unpacked->probe_ID;
 			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->voltage_level))[0]; // MSB
@@ -378,8 +378,8 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			uint8_t msg[64] = {0};
 			uint8_t msg_cnt = 0;
 
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;
 			msg[msg_cnt++] = FPGA_GET_CB_VOL_LVL;
 			msg[msg_cnt++] = pus8_msg_unpacked->probe_ID;
 			msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
@@ -403,8 +403,8 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			uint8_t msg[64] = {0};
 			uint8_t msg_cnt = 0;
 
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;
 			msg[msg_cnt++] = FPGA_SET_SWT_STEPS;
 			msg[msg_cnt++] = pus8_msg_unpacked->N_steps;
 			msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
@@ -421,8 +421,8 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			uint8_t msg[64] = {0};
 			uint8_t msg_cnt = 0;
 
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;
 			msg[msg_cnt++] = FPGA_GET_SWT_STEPS;
 			msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
 
@@ -444,8 +444,8 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			uint8_t msg[64] = {0};
 			uint8_t msg_cnt = 0;
 
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;
 			msg[msg_cnt++] = FPGA_SET_SWT_SAMPLES_PER_STEP;
 			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_samples_per_step))[0]; // MSB
 			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_samples_per_step))[1]; // LSB
@@ -463,8 +463,8 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			uint8_t msg[64] = {0};
 			uint8_t msg_cnt = 0;
 
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;
 			msg[msg_cnt++] = FPGA_GET_SWT_SAMPLES_PER_STEP;
 			msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
 
@@ -486,8 +486,8 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			uint8_t msg[64] = {0};
 			uint8_t msg_cnt = 0;
 
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;
 			msg[msg_cnt++] = FPGA_SET_SWT_SAMPLE_SKIP;
 			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_skip))[0]; // MSB
 			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_skip))[1]; // LSB
@@ -505,8 +505,8 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			uint8_t msg[64] = {0};
 			uint8_t msg_cnt = 0;
 
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;
 			msg[msg_cnt++] = FPGA_GET_SWT_SAMPLE_SKIP;
 			msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
 
@@ -528,8 +528,8 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			uint8_t msg[64] = {0};
 			uint8_t msg_cnt = 0;
 
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;
 			msg[msg_cnt++] = FPGA_SET_SWT_SAMPLES_PER_POINT;
 			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_f))[0]; // MSB
 			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_f))[1]; // LSB
@@ -547,8 +547,8 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			uint8_t msg[64] = {0};
 			uint8_t msg_cnt = 0;
 
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;
 			msg[msg_cnt++] = FPGA_GET_SWT_SAMPLES_PER_POINT;
 			msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
 
@@ -570,8 +570,8 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			uint8_t msg[64] = {0};
 			uint8_t msg_cnt = 0;
 
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;
 			msg[msg_cnt++] = FPGA_SET_SWT_NPOINTS;
 			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_points))[0]; // MSB
 			msg[msg_cnt++] = ((uint8_t*)(&pus8_msg_unpacked->N_points))[1]; // LSB
@@ -589,8 +589,8 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			uint8_t msg[64] = {0};
 			uint8_t msg_cnt = 0;
 
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-			msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;
+			msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;
 			msg[msg_cnt++] = FPGA_GET_SWT_NPOINTS;
 			msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
 

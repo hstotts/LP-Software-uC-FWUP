@@ -22,7 +22,7 @@ extern UART_HandleTypeDef huart5;
 QueueHandle_t PUS_3_Queue; 
 
 
-TM_Err_Codes PUS_3_set_report_frequency(uint8_t* data, PUS_3_msg* pus3_msg_received) {
+TM_Err_Codes PUS_3_perform_HK(uint8_t* data, PUS_3_msg* pus3_msg_received) {
     uint8_t* data_iterator = data;
     uint8_t SID_num = 0;
     uint8_t SID = 0;
@@ -45,14 +45,14 @@ TM_Err_Codes PUS_3_set_report_frequency(uint8_t* data, PUS_3_msg* pus3_msg_recei
             SID == HK_ID_PRESSURE       )
         {
         
-            switch (pus3_msg_received->new_report_frequency) {
-                case 1: // 3.27 --> ONE SHOT
+            switch (pus3_msg_received->PUS_TC_header.message_subtype_id) {
+                case HK_ONE_SHOT: 
                 {
                     uint8_t msg[64] = {0};
                     uint8_t msg_cnt = 0;
 
-                    msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-                    msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+                    msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;
+                    msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;
                     msg[msg_cnt++] = FPGA_GET_SENSOR_DATA; // F9
                     msg[msg_cnt++] = SID; // HK_ID
                     msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
@@ -66,7 +66,7 @@ TM_Err_Codes PUS_3_set_report_frequency(uint8_t* data, PUS_3_msg* pus3_msg_recei
                     break;
                 }
 
-                case 2: // 3.31 --> SET PERIOD
+                case HK_SET_PERIOD: 
                 {
                     if (data_iterator > data + pus3_msg_received->data_size-1) {
                         return INVALID_PLENGTH;
@@ -81,8 +81,8 @@ TM_Err_Codes PUS_3_set_report_frequency(uint8_t* data, PUS_3_msg* pus3_msg_recei
                     uint8_t msg[64] = {0};
                     uint8_t msg_cnt = 0;
 
-                    msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-                    msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+                    msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;
+                    msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;
                     msg[msg_cnt++] = FPGA_SET_PERIOD; // F2
                     msg[msg_cnt++] = SID; // HK_ID
                     msg[msg_cnt++] = T;
@@ -96,14 +96,14 @@ TM_Err_Codes PUS_3_set_report_frequency(uint8_t* data, PUS_3_msg* pus3_msg_recei
                     }
                     break;
                 }
-                case 3: // 3.33 --> GET PERIOD
+                case HK_GET_PERIOD:
                 {
 
                     uint8_t msg[64] = {0};
                     uint8_t msg_cnt = 0;
 
-                    msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-                    msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+                    msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;
+                    msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;
                     msg[msg_cnt++] = FPGA_GET_PERIOD; // E9
                     msg[msg_cnt++] = SID; // HK_ID
                     msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
@@ -145,22 +145,6 @@ TM_Err_Codes PUS_3_handle_HK_TC(SPP_header_t* SPP_header , PUS_TC_header_t* PUS_
         return ILLEGAL_VERSION ;
     }
 
-    // Define report frequency and handle different message subtypes
-    uint8_t report_frequency = 0;
-
-    switch (PUS_TC_header->message_subtype_id) {
-        case HK_ONE_SHOT:
-            report_frequency = 1;
-            break;
-        case HK_SET_PERIOD:
-            report_frequency = 2;
-            break;
-        case HK_GET_PERIOD:
-            report_frequency = 3;
-            break;
-        default:
-            return HK_INVALID_SID;  
-    }
 
     PUS_1_send_succ_acc(SPP_header, PUS_TC_header);
 
@@ -169,7 +153,6 @@ TM_Err_Codes PUS_3_handle_HK_TC(SPP_header_t* SPP_header , PUS_TC_header_t* PUS_
 	pus3_msg_to_send.PUS_TC_header = *PUS_TC_header;
 	memcpy(pus3_msg_to_send.data, data, data_size);
 	pus3_msg_to_send.data_size = data_size;
-	pus3_msg_to_send.new_report_frequency = report_frequency;
 
     if (xQueueSend(PUS_3_Queue, &pus3_msg_to_send, 0) != pdPASS) {
     	PUS_1_send_fail_comp(SPP_header, PUS_TC_header, BAD_STATE);

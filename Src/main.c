@@ -780,7 +780,7 @@ void handle_PUS_3_Service(void const * argument)
     {
     		if (xQueueReceive(PUS_3_Queue, &pus3_msg_received, portMAX_DELAY) == pdPASS)
     		{
-    			result = PUS_3_set_report_frequency(pus3_msg_received.data, &pus3_msg_received);
+    			result = PUS_3_perform_HK(pus3_msg_received.data, &pus3_msg_received);
           
     			if(result == NO_ERROR)
     			{
@@ -980,7 +980,7 @@ void handle_UART_IN_FPGA(void const * argument)
             int start = -1;
             for (int i = 0; i < FPGA_FRAME_LEN-1; i++) // search position of preamble
             {
-              if (UART_FPGA_Rx_Buffer[i] == FPGA_MSG_PREMABLE_0 && UART_FPGA_Rx_Buffer[i + 1] == FPGA_MSG_PREMABLE_1)
+              if (UART_FPGA_Rx_Buffer[i] == FPGA_MSG_PREAMBLE_0 && UART_FPGA_Rx_Buffer[i + 1] == FPGA_MSG_PREAMBLE_1)
               {
                 start = i;
                 break;
@@ -998,7 +998,7 @@ void handle_UART_IN_FPGA(void const * argument)
             else // preamble not found
             { 
               // special scenario: if last byte is first preamble, shift of 1 byte
-              if (UART_FPGA_Rx_Buffer[FPGA_FRAME_LEN-1] == FPGA_MSG_PREMABLE_0)
+              if (UART_FPGA_Rx_Buffer[FPGA_FRAME_LEN-1] == FPGA_MSG_PREAMBLE_0)
               {
                 UART_FPGA_Rx_Buffer[0] = UART_FPGA_Rx_Buffer[FPGA_FRAME_LEN-1];
                 HAL_UART_Receive_DMA(&huart5, UART_FPGA_Rx_Buffer + 1, FPGA_FRAME_LEN-1);

@@ -173,8 +173,8 @@
 // //                 uint8_t msg[64] = {0};
 // //                 uint8_t msg_cnt = 0;
 
-// //                 msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-// //                 msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+// //                 msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;
+// //                 msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;
 // //                 msg[msg_cnt++] = FPGA_GET_SENSOR_DATA; // F9
 // //                 msg[msg_cnt++] = (uint8_t)(SID & 0x00FF); // HK_ID
 // //                 msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;
@@ -200,8 +200,8 @@
 // //                 uint8_t msg[64] = {0};
 // //                 uint8_t msg_cnt = 0;
 
-// //                 msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;
-// //                 msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;
+// //                 msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;
+// //                 msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;
 // //                 msg[msg_cnt++] = FPGA_SET_PERIOD; // F2
 // //                 msg[msg_cnt++] = (uint8_t)(SID & 0x00FF); // HK_ID
 // //                 msg[msg_cnt++] = T;
@@ -257,8 +257,8 @@
 //                 uint8_t msg[64] = {0};
 //                 uint8_t msg_cnt = 0;
 
-//                 msg[msg_cnt++] = FPGA_MSG_PREMABLE_0;   
-//                 msg[msg_cnt++] = FPGA_MSG_PREMABLE_1;   
+//                 msg[msg_cnt++] = FPGA_MSG_PREAMBLE_0;   
+//                 msg[msg_cnt++] = FPGA_MSG_PREAMBLE_1;   
 //                 msg[msg_cnt++] = FPGA_GET_SENSOR_DATA;  
 //                 msg[msg_cnt++] = (uint8_t)(SID & 0x00FF);  // HK_ID to send to FPGA
 //                 msg[msg_cnt++] = FPGA_MSG_POSTAMBLE;   
