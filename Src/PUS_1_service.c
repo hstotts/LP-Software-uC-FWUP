@@ -26,6 +26,7 @@ static inline uint8_t succ_completion_req(PUS_TC_header_t* secondary_header) {
     return secondary_header->ACK_flags & 0x01;
 }
 
+// IMPLEMENTED
 void PUS_1_send_succ_acc(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_h) {
     if (succ_acceptence_req(PUS_h)) {
 
@@ -76,7 +77,48 @@ void PUS_1_send_fail_acc(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_h, PUS_1_Fail
     	xQueueSend(UART_OBC_Out_Queue, &msg_to_send, portMAX_DELAY);
     }
 }
+void PUS_1_send_succ_comp(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_h) {
+    if (succ_completion_req(PUS_h)) {
 
+    	UART_OUT_OBC_msg msg_to_send = {0};
+
+		msg_to_send.PUS_HEADER_PRESENT	= 1;
+		msg_to_send.PUS_SOURCE_ID 		= PUS_h->source_id;
+		msg_to_send.SERVICE_ID			= REQUEST_VERIFICATION_SERVICE_ID;
+		msg_to_send.SUBTYPE_ID			= RV_SUCC_COMPL_OF_EXEC_VERIFICATION_ID;
+		// The ACK message contains as data the SPP header of the incoming request (without the data length field)
+		SPP_encode_header(SPP_h, msg_to_send.TM_data);
+		msg_to_send.TM_data_len			= SPP_HEADER_LEN - 2;
+
+		xQueueSend(UART_OBC_Out_Queue, &msg_to_send, portMAX_DELAY);
+    }
+}
+void PUS_1_send_fail_comp(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_h, uint16_t err_code) {
+    if (succ_completion_req(PUS_h)) {
+    	UART_OUT_OBC_msg msg_to_send = {0};
+
+		msg_to_send.PUS_HEADER_PRESENT	= 1;
+    	msg_to_send.PUS_SOURCE_ID 		= PUS_h->source_id;
+    	msg_to_send.SERVICE_ID			= REQUEST_VERIFICATION_SERVICE_ID;
+    	msg_to_send.SUBTYPE_ID			= RV_FAIL_COMPL_OF_EXEC_VERIFICATION_ID;
+		// The ACK FAIL message contains as data
+    	// -> 4 bytes = the SPP header of the incoming request (without the data length field)
+    	SPP_encode_header(SPP_h, msg_to_send.TM_data);
+    	// -> 4 bytes = information about the failure
+    	// here we overwrite the last 2 bytes written before because they store the data length of the SPP packet
+    	// and that should not be included
+    	msg_to_send.TM_data[SPP_HEADER_LEN - 2] 	= (err_code >> 8) & 0xFF;
+		msg_to_send.TM_data[SPP_HEADER_LEN - 2 + 1] = err_code & 0xFF;
+		msg_to_send.TM_data[SPP_HEADER_LEN - 2 + 2] = PUS_h->service_type_id;
+		msg_to_send.TM_data[SPP_HEADER_LEN - 2 + 3] = PUS_h->message_subtype_id;
+
+		msg_to_send.TM_data_len			= SPP_HEADER_LEN - 2 + 4;
+
+    	xQueueSend(UART_OBC_Out_Queue, &msg_to_send, portMAX_DELAY);
+    }
+}
+
+// NOT IMPLEMENTED
 void PUS_1_send_succ_start(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_h) {
     if (succ_start_req(PUS_h)) {
 
@@ -118,7 +160,6 @@ void PUS_1_send_fail_start(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_h, uint16_t
     	xQueueSend(UART_OBC_Out_Queue, &msg_to_send, portMAX_DELAY);
     }
 }
-
 void PUS_1_send_succ_prog(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_h) {
     if (succ_progress_req(PUS_h)) {
 
@@ -161,48 +202,7 @@ void PUS_1_send_fail_prog(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_h, uint16_t 
     }
 }
 
-void PUS_1_send_succ_comp(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_h) {
-    if (succ_completion_req(PUS_h)) {
-
-    	UART_OUT_OBC_msg msg_to_send = {0};
-
-		msg_to_send.PUS_HEADER_PRESENT	= 1;
-		msg_to_send.PUS_SOURCE_ID 		= PUS_h->source_id;
-		msg_to_send.SERVICE_ID			= REQUEST_VERIFICATION_SERVICE_ID;
-		msg_to_send.SUBTYPE_ID			= RV_SUCC_COMPL_OF_EXEC_VERIFICATION_ID;
-		// The ACK message contains as data the SPP header of the incoming request (without the data length field)
-		SPP_encode_header(SPP_h, msg_to_send.TM_data);
-		msg_to_send.TM_data_len			= SPP_HEADER_LEN - 2;
-
-		xQueueSend(UART_OBC_Out_Queue, &msg_to_send, portMAX_DELAY);
-    }
-}
-void PUS_1_send_fail_comp(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_h, uint16_t err_code) {
-    if (succ_completion_req(PUS_h)) {
-    	UART_OUT_OBC_msg msg_to_send = {0};
-
-		msg_to_send.PUS_HEADER_PRESENT	= 1;
-    	msg_to_send.PUS_SOURCE_ID 		= PUS_h->source_id;
-    	msg_to_send.SERVICE_ID			= REQUEST_VERIFICATION_SERVICE_ID;
-    	msg_to_send.SUBTYPE_ID			= RV_FAIL_COMPL_OF_EXEC_VERIFICATION_ID;
-		// The ACK FAIL message contains as data
-    	// -> 4 bytes = the SPP header of the incoming request (without the data length field)
-    	SPP_encode_header(SPP_h, msg_to_send.TM_data);
-    	// -> 4 bytes = information about the failure
-    	// here we overwrite the last 2 bytes written before because they store the data length of the SPP packet
-    	// and that should not be included
-    	msg_to_send.TM_data[SPP_HEADER_LEN - 2] 	= (err_code >> 8) & 0xFF;
-		msg_to_send.TM_data[SPP_HEADER_LEN - 2 + 1] = err_code & 0xFF;
-		msg_to_send.TM_data[SPP_HEADER_LEN - 2 + 2] = PUS_h->service_type_id;
-		msg_to_send.TM_data[SPP_HEADER_LEN - 2 + 3] = PUS_h->message_subtype_id;
-
-		msg_to_send.TM_data_len			= SPP_HEADER_LEN - 2 + 4;
-
-    	xQueueSend(UART_OBC_Out_Queue, &msg_to_send, portMAX_DELAY);
-    }
-}
-
-
+// DEBUG 
 void PUS_1_debug(uint8_t *buffer)
 {
     UART_OUT_OBC_msg msg_to_send = {0};
@@ -231,8 +231,10 @@ void PUS_1_debug_byte(uint8_t b)
     UART_OUT_OBC_msg msg_to_send = {0};
     msg_to_send.PUS_HEADER_PRESENT = 0;
 
-    msg_to_send.TM_data[0] = b;
-    msg_to_send.TM_data_len = 1;
+    msg_to_send.TM_data[0] = 0xAA;
+    msg_to_send.TM_data[1] = b;
+    msg_to_send.TM_data[2] = 0xBB;
+    msg_to_send.TM_data_len = 3;
 
     xQueueSend(UART_OBC_Out_Queue, &msg_to_send, portMAX_DELAY);
 }
