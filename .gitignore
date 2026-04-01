@@ -2,3 +2,4 @@ TAGS
 .vscode
 Debug/*
 Build/*
+.DS_Store

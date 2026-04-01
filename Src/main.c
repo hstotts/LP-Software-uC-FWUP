@@ -174,7 +174,10 @@ int main(void)
   FPGA_IN_Queue      = xQueueCreate(128, sizeof(FPGA_IN_Msg_t)); 
   UART_OBC_Out_Queue = xQueueCreate(1, sizeof(UART_OUT_OBC_msg));
   PUS_3_Queue = xQueueCreate(1, sizeof(PUS_3_msg));
-  PUS_8_Queue = xQueueCreate(1, sizeof(PUS_8_msg));
+// --------------------------------------------------------------------------------------------------
+  PUS_8_Queue = xQueueCreate(8, sizeof(PUS_8_msg));
+ // --------------------------------------------------------------------------------------------------
+
 
 
   Current_Global_Device_State = NORMAL_MODE;

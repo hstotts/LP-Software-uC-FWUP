@@ -29,6 +29,17 @@
 
 #define NEW_APP_ADDRESS 0x08010000
 
+// ---------------------- FWUP State Machine --------------------------------
+#define FWUP_STAGE_BASE   0x20010000u   // SRAM staging base... TBD
+#define FWUP_STAGE_SIZE   (256u * 1024u)
+
+static uint8_t  fwup_active = 0;
+static uint8_t  fwup_img_id = 0;
+static uint32_t fwup_expected_size = 0;
+static uint32_t fwup_expected_crc32 = 0;
+static uint32_t fwup_bytes_written = 0;
+// ----------------------------------------------------------------------------
+
 extern QueueHandle_t UART_OBC_Out_Queue;
 extern UART_HandleTypeDef huart5;
 
@@ -130,6 +141,52 @@ TM_Err_Codes PUS_8_unpack_msg(PUS_8_msg *pus8_msg_received, PUS_8_msg_unpacked* 
 				memcpy((uint8_t*)&pus8_msg_unpacked->N_samples_per_step, data_interator, sizeof(pus8_msg_unpacked->N_samples_per_step));
 				data_interator += sizeof(pus8_msg_unpacked->N_samples_per_step);
 				break;
+// ----------------------------------------------------------------------------
+			case IMG_ID_ARG_ID:
+				if ((data_end - data_interator) < 1) return INVALID_PLENGTH;
+				pus8_msg_unpacked->img_id = *data_interator++;
+				break;
+
+			case IMG_SIZE_ARG_ID:
+				if ((data_end - data_interator) < 4) return INVALID_PLENGTH;
+				memcpy(&pus8_msg_unpacked->img_size, data_interator, 4);
+				data_interator += 4;
+				break;
+
+			case IMG_CRC32_ARG_ID:
+				if ((data_end - data_interator) < 4) return INVALID_PLENGTH;
+				memcpy(&pus8_msg_unpacked->img_crc32, data_interator, 4);
+				data_interator += 4;
+				break;
+
+			case IMG_ADDR_ARG_ID:
+				if ((data_end - data_interator) < 4) return INVALID_PLENGTH;
+				memcpy(&pus8_msg_unpacked->img_addr, data_interator, 4);
+				data_interator += 4;
+				break;
+
+			case BANK_ID_ARG_ID:
+				if ((data_end - data_interator) < 1) return INVALID_PLENGTH;
+				pus8_msg_unpacked->bank_id = *data_interator++;
+				break;
+
+			case SEC_ID_ARG_ID:
+				if ((data_end - data_interator) < 2) return INVALID_PLENGTH;
+				memcpy(&pus8_msg_unpacked->sec_id, data_interator, 2);
+				data_interator += 2;
+				break;
+
+			case IMG_DATA_ARG_ID:
+			{
+				// consume the rest of the packet as image bytes
+				uint16_t remain = (uint16_t)(data_end - data_interator);
+				if (remain > PUS_8_MAX_DATA_LEN) return INVALID_PLENGTH;
+				pus8_msg_unpacked->img_data_len = remain;
+				memcpy(pus8_msg_unpacked->img_data, data_interator, remain);
+				data_interator = data_end;
+				break;
+			}
+// ----------------------------------------------------------------------------
 
 			default:
 				return UNDEFINED_PARAM_ID;
@@ -648,6 +705,124 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			app_reset_handler();   // Jump to application
 			break;
 		}
+//------------------------------ UPDATE CASES --------------------------------------------
+
+		case FWUP_BEGIN:
+		{
+			// Start a new update session
+			fwup_active = 1;
+			fwup_img_id = pus8_msg_unpacked->img_id;
+			fwup_expected_size = pus8_msg_unpacked->img_size;
+			fwup_expected_crc32 = pus8_msg_unpacked->img_crc32;
+			fwup_bytes_written = 0;
+
+			// hard safety check: must fit staging SRAM window
+			if (fwup_expected_size == 0 || fwup_expected_size > FWUP_STAGE_SIZE) {
+				fwup_active = 0;
+				return INVALID_PLENGTH;   // use better code
+			}
+
+			//PUS_1_send_succ_comp(SPP_h, PUS_TC_h)//???????????????????????????????????????????????????????????????????
+			// Optional: clear staging region (not required, but can help debug?)
+			// memset((void*)FWUP_STAGE_BASE, 0xFF, fwup_expected_size);
+
+			break;
+		}
+
+		case FWUP_SRAM_WRITE:
+		{
+			if (!fwup_active) {
+				return DEV_CPDU_EXEC_FAIL; // use better code
+			}
+
+			uint32_t addr = pus8_msg_unpacked->img_addr;
+			uint16_t len  = pus8_msg_unpacked->img_data_len;
+
+			if (len == 0) {
+				return INVALID_PLENGTH;
+			}
+
+			// Must land inside staging region
+			if (addr < FWUP_STAGE_BASE ||
+				(addr + len) > (FWUP_STAGE_BASE + FWUP_STAGE_SIZE)) {
+				return DEV_CPDU_EXEC_FAIL;  // use better code
+			}
+
+			// Must not exceed the declared image size window
+			uint32_t rel_start = addr - FWUP_STAGE_BASE;
+			if ((rel_start + len) > fwup_expected_size) {
+				return INVALID_PLENGTH;
+			}
+
+			memcpy((void*)addr, pus8_msg_unpacked->img_data, len);
+
+			// Track highest written offset (+len)
+			uint32_t rel_end = rel_start + len;
+			if (rel_end > fwup_bytes_written) {
+				fwup_bytes_written = rel_end;
+			}
+
+			break;
+		}
+
+		case FWUP_FLASH:
+		{
+			if (!fwup_active) {
+				return DEV_CPDU_EXEC_FAIL;
+			}
+
+			// Require that the whole image range is present in SRAM
+			if (fwup_bytes_written != fwup_expected_size) {
+				return INVALID_PLENGTH;
+			}
+
+			// CRC32 over the staged image in SRAM
+			uint32_t calc = crc32_calc((uint8_t*)FWUP_STAGE_BASE, fwup_expected_size);
+			if (calc != fwup_expected_crc32) {
+				return CS_DISCREP;   // checksum discrepancy
+			}
+
+
+
+			// 2) Destination flash address (from this command)
+			uint32_t flash_addr = pus8_msg_unpacked->img_addr;
+
+			// Optional: validate flash range here?
+			// if (!FLASHIF_IsInAllowedRegion(flash_addr, fwup_expected_size)) return DEV_CPDU_EXEC_FAIL;
+
+			// 3) Ensure target region is blank (0xFF) 
+			if (!FLASHIF_IsBlank(flash_addr, fwup_expected_size)) {
+				// Not empty -> cannot safely program without erase
+				return DEV_CPDU_EXEC_FAIL;
+			}
+
+			// 4) Program flash (no erase)
+			if (FLASHIF_ProgramBuffer((uint32_t*)flash_addr,
+									(uint32_t*)FWUP_STAGE_BASE,
+									fwup_expected_size / 4) != FLASHIF_OK) {
+				return DEV_CPDU_EXEC_FAIL;
+			}
+
+			// 5) Optional readback verify:
+			//    compute CRC32 over flash content and compare again
+			uint32_t flash_crc = crc32_calc((uint8_t*)flash_addr, fwup_expected_size);
+			if (flash_crc != fwup_expected_crc32) {
+				return DEV_CPDU_EXEC_FAIL;
+			}
+
+			// 6) Update FRAM metadata
+			// Store: img_id, flash_addr, size, crc32, plus "valid" flag if you have one.
+			FRAMMETA_SetImageInfo(fwup_img_id,
+								flash_addr,
+								fwup_expected_size,
+								fwup_expected_crc32,
+								pus8_msg_unpacked->bank_id);
+
+			fwup_active = 0;
+			break;
+		}
+
+		//-----------------------------------------------------------------------------------------
 
 
 		default:

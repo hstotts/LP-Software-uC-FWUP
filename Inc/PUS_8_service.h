@@ -11,8 +11,9 @@
 #ifndef PUS_8_SERVIE_H_
 #define PUS_8_SERVIE_H_
 
-#define PUS_8_MAX_DATA_LEN 	20
-
+// ----------------------------------------------------------------------------
+#define PUS_8_MAX_DATA_LEN 	220
+// ----------------------------------------------------------------------------
 
 
 
@@ -45,6 +46,18 @@ typedef struct {
     uint8_t HK_PERIODIC_ID; //ADDED
     uint8_t HK_PERIOD_ID;
 
+    // ----------------------------------------------------------------------------
+    uint8_t  img_id;
+    uint32_t img_size;
+    uint32_t img_crc32;
+    uint32_t img_addr;
+    uint8_t  bank_id;
+    uint16_t sec_id;
+
+    uint8_t  img_data[PUS_8_MAX_DATA_LEN];
+    uint16_t img_data_len;
+    // ----------------------------------------------------------------------------
+
 } PUS_8_msg_unpacked;
 
 typedef enum {
@@ -70,10 +83,34 @@ typedef enum {
     FPGA_GET_SWT_SAMPLES_PER_POINT  = 0x98,
     FPGA_GET_SWT_NPOINTS            = 0xA8,
 
-	REBOOT_DEVICE 					= 0xF3,
-	JUMP_TO_IMAGE					= 0xF4,
+	// ----------------------------------------------------------------------------
+    REBOOT_DEVICE 					= 0xF0,
+    JUMP_TO_IMAGE					= 0xF1,
+
+    FWUP_BEGIN                      = 0xF3,
+    FWUP_SRAM_WRITE                 = 0xF4,
+    FWUP_FLASH                      = 0xF5,
+
+    // GET_MD                       = 0xF6,
+    JUMP_TO_TI                      = 0xF7,
+    RESTART_BL                      = 0xF8,
+	// ----------------------------------------------------------------------------
+
 
 } PUS_8_Func_ID;
+
+// ----------------------------------------------------------------------------
+typedef enum {
+    IMG_ID_ARG_ID    = 0x20, // u8
+    IMG_SIZE_ARG_ID  = 0x21, // u32 LE
+    IMG_CRC32_ARG_ID = 0x22, // u32 LE
+    IMG_ADDR_ARG_ID  = 0x23, // u32 LE (SRAM or FLASH depending on func)
+    BANK_ID_ARG_ID   = 0x24, // u8
+    SEC_ID_ARG_ID    = 0x25, // u16 LE (optional)
+    IMG_DATA_ARG_ID  = 0x26, // variable bytes (consume rest)
+} FWUP_Arg_ID_t;
+// ----------------------------------------------------------------------------
+
 
 typedef enum {
     TABLE_ID_ARG_ID             = 0x01,
