@@ -798,8 +798,8 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 
 			// 4) Program flash (no erase)
 			if (FLASHIF_ProgramBuffer((uint32_t*)flash_addr,
-									(uint32_t*)FWUP_STAGE_BASE,
-									fwup_expected_size / 4) != FLASHIF_OK) {
+                      (uint32_t*)FWUP_STAGE_BASE,
+                      (fwup_expected_size + 3u) / 4u) != FLASHIF_OK) {
 				return DEV_CPDU_EXEC_FAIL;
 			}
 
