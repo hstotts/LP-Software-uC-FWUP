@@ -63,7 +63,20 @@ typedef enum {
 
     // --- Distribution / undefined parameter ---
     UNDEFINED_PARAM_ID          = 0x0142, // Undefined parameter ID
-    UNDEFINED_ID                = 0x0132  // Undefined general identifier
+    UNDEFINED_ID                = 0x0132,  // Undefined general identifier
+
+	// --- Firmware update processes ---
+	UPDATE_INACTIVE 			= 0x0500, // Update mode inactive
+	IMG_SIZE_DISCREP			= 0x0501, // 
+	SRAM_IMG_DISCREP			= 0x0502, // SRAM/Image size and address incompatable   
+	SRAM_BUFFER_FAIL 			= 0x0503, //
+	IMG_INCOMPLETE 				= 0x0504, // Image incomplete in SRAM
+	FLASH_MEM_FULL				= 0x0505, // Expected blank flash target region
+	FLASH_CS_DISCREP			= 0x0506  // Flash memory CRC mismatch
+
+
+
+
 
 // UNUSED
 /* 

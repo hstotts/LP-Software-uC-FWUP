@@ -20,7 +20,7 @@ typedef HAL_StatusTypeDef FLASHIF_StatusTypedef;
 
 // PUS_8_service-compatible helpers
 bool FLASHIF_IsBlank(uint32_t base, uint32_t size);
-FLASHIF_StatusTypedef FLASHIF_ProgramBuffer(uint32_t *dst, uint32_t *src, uint32_t word_count);
+FLASHIF_StatusTypedef FLASHIF_ProgramBuffer(uint32_t *dst, const uint8_t *src, uint32_t byte_count);
 
 // Keep erase helper too, even if PUS_8 doesn't call it yet
 HAL_StatusTypeDef FLASHIF_EraseRange(uint32_t base, uint32_t size);

@@ -12,11 +12,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// Reuse your FRAM.h CRC + read/write:
+// Reuse built FRAM.h CRC + read/write:
 #include <FRAM.h>
 
 #ifndef NUM_SLOTS
-#define NUM_SLOTS 5
+#define NUM_SLOTS 24
 #endif
 
 /* ----- Public block type (exposed for reading/debug) ----- */
@@ -28,9 +28,25 @@ typedef struct __attribute__((packed)) {
     uint8_t  active_idx;   // selected image index (1..NUM_SLOTS)
     uint8_t  commit;       // 0xFF = WIP, 0xA5 = committed (write LAST)
     uint8_t  _rsv[2];      // reserved (set to 0xFF)
+    uint8_t  rec[NUM_SLOTS][20]; // packed 20-byte per-slot records
     uint16_t crc16;        // CRC16-CCITT over [magic.._rsv] + rec[] (excl. this field)
-    uint8_t  rec[NUM_SLOTS][7]; // packed 7-byte per-slot records
 } fram_meta_block_t;
+
+
+/* Per-slot record byte offsets (within each rec[i][20] array) */
+#define SLOT_OFF_CRC16_HI     0   // CRC16 high byte (over bytes [2..19])
+#define SLOT_OFF_CRC16_LO     1   // CRC16 low byte
+#define SLOT_OFF_FLASH_ADDR   2   // u32 LE, bytes [2..5]
+#define SLOT_OFF_IMAGE_SIZE   6   // u32 LE, bytes [6..9]
+#define SLOT_OFF_IMAGE_CRC32  10  // u32 LE, bytes [10..13]
+#define SLOT_OFF_BANK_ID      14
+#define SLOT_OFF_IMAGE_INDEX  15
+#define SLOT_OFF_BOOT_COUNTER 16
+#define SLOT_OFF_BOOT_FB      17
+#define SLOT_OFF_NEW_META     18
+#define SLOT_OFF_ERROR_CODE   19
+#define SLOT_RECORD_DATA_LEN  18  // bytes [2..19], covered by CRC
+
 
 /* ----- API ----- */
 
@@ -56,18 +72,21 @@ bool FRAMMETA_SetImageInfo(uint8_t img_id,
 // After calling setters, call FRAMMETA_CommitNext() to persist.
 void FRAMMETA_SetActiveIndex(uint8_t idx);
 
-// Update one slot's 7-byte record using your existing minimal fields.
-// NOTE: since 7-byte layout doesn't hold base addresses, size, etc.,
-// those params are accepted for future use but only minimal fields are packed.
+// Update one slot's 20-byte record. Packs all fields: flash_addr, image_size,
+// image_crc32, bank_id, and boot state fields. Call FRAMMETA_CommitNext() to persist.
 void FRAMMETA_SetSlot(uint8_t slot_idx,
-                      /* optional informational fields for future expansion */
-                      uint32_t base_addr, uint32_t image_size, uint32_t image_crc, uint8_t bank_id,
-                      /* state mapping to your 7-byte semantics */
-                      uint8_t boot_feedback, uint8_t boot_counter, uint8_t new_metadata, uint8_t error_code);
+                      uint32_t base_addr,    // flash address of image
+                      uint32_t image_size,   // image size in bytes
+                      uint32_t image_crc,    // CRC32 of image
+                      uint8_t  bank_id,      // flash bank (0=bank1, 1=bank2)
+                      uint8_t boot_feedback, // e.g. BOOT_NEW_IMAGE or BOOTED_OK
+                      uint8_t boot_counter,  // decremented by bootloader on each attempt
+                      uint8_t new_metadata,  // 1=pending confirm, 0=confirmed healthy
+                      uint8_t error_code);
 
 // Accessors (from the internal working copy loaded by FRAMMETA_Load / InitDefaults)
 uint8_t FRAMMETA_GetActiveIndex(void);
-bool FRAMMETA_GetSlotRaw(uint8_t slot_idx, uint8_t out7[7]);
+bool FRAMMETA_GetSlotRaw(uint8_t slot_idx, uint8_t out20[20]);
 
 /* Optional: helper to force-recompute per-slot record CRC (2 bytes on [2..6]) */
 void FRAMMETA_RecalcSlotCRC(uint8_t slot_idx);

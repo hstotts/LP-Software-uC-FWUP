@@ -9,6 +9,10 @@ extern "C" {
 #endif
 
 // ============================================================================
+
+// ******************** FLASH AND SRAM MEMORY MAP ********************
+
+// ============================================================================
 // STM32F7 Dual-bank flash layout 
 // Bank1: 0x0800_0000 .. 0x080F_FFFF  (Sectors 0..11)
 // Bank2: 0x0810_0000 .. 0x081F_FFFF  (Sectors 12..23)
@@ -228,6 +232,29 @@ static inline int flash_range_is_within_flash(uint32_t base, uint32_t size)
     }
     return 0;
 }
+
+
+// ============================================================================
+// SRAM layout – STM32F767VIT
+// DTCM  128KB @ 0x20000000  – application stack/heap only
+// SRAM1 368KB @ 0x20020000  – general use; top 44KB reserved below
+// SRAM2  16KB @ 0x2007C000  – application use
+// ============================================================================
+
+#define SRAM1_BASE             0x20020000u
+#define SRAM1_SIZE             0x0005C000u   // 368KB
+
+// Firmware staging buffer – holds one incoming OTA image
+#define SRAM_FW_STAGING_BASE   0x20071000u
+#define SRAM_FW_STAGING_SIZE   0x0000A000u   // 40KB
+
+// Sweep table working buffer – 8 tables × 256 steps × 2 bytes
+#define SRAM_SWEEP_BUF_BASE    0x2007B000u
+#define SRAM_SWEEP_BUF_SIZE    0x00001000u   // 4KB
+
+// Sanity: staging + sweep = 44KB, fits within top of SRAM1
+// 0x20071000 + 0xA000 + 0x1000 = 0x2007C000 == SRAM1 top
+
 
 #ifdef __cplusplus
 }

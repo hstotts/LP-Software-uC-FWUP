@@ -719,7 +719,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			// hard safety check: must fit staging SRAM window
 			if (fwup_expected_size == 0 || fwup_expected_size > FWUP_STAGE_SIZE) {
 				fwup_active = 0;
-				return INVALID_PLENGTH;   // use better code
+				return SRAM_IMG_DISCREP;  
 			}
 
 			//PUS_1_send_succ_comp(SPP_h, PUS_TC_h)//???????????????????????????????????????????????????????????????????
@@ -732,7 +732,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 		case FWUP_SRAM_WRITE:
 		{
 			if (!fwup_active) {
-				return DEV_CPDU_EXEC_FAIL; // use better code
+				return UPDATE_INACTIVE; 
 			}
 
 			uint32_t addr = pus8_msg_unpacked->img_addr;
@@ -745,13 +745,13 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			// Must land inside staging region
 			if (addr < FWUP_STAGE_BASE ||
 				(addr + len) > (FWUP_STAGE_BASE + FWUP_STAGE_SIZE)) {
-				return DEV_CPDU_EXEC_FAIL;  // use better code
+				return SRAM_BUFFER_FAIL;  // use better code??????
 			}
 
 			// Must not exceed the declared image size window
 			uint32_t rel_start = addr - FWUP_STAGE_BASE;
 			if ((rel_start + len) > fwup_expected_size) {
-				return INVALID_PLENGTH;
+				return SRAM_IMG_DISCREP;
 			}
 
 			memcpy((void*)addr, pus8_msg_unpacked->img_data, len);
@@ -768,50 +768,45 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 		case FWUP_FLASH:
 		{
 			if (!fwup_active) {
-				return DEV_CPDU_EXEC_FAIL;
+				return UPDATE_INACTIVE;
 			}
 
-			// Require that the whole image range is present in SRAM
 			if (fwup_bytes_written != fwup_expected_size) {
-				return INVALID_PLENGTH;
+				return IMG_INCOMPLETE;
 			}
 
-			// CRC32 over the staged image in SRAM
+			// 1) Verify staged SRAM image CRC32
 			uint32_t calc = crc32_calc((uint8_t*)FWUP_STAGE_BASE, fwup_expected_size);
 			if (calc != fwup_expected_crc32) {
-				return CS_DISCREP;   // checksum discrepancy
+				return CS_DISCREP;
 			}
 
-
-
-			// 2) Destination flash address (from this command)
 			uint32_t flash_addr = pus8_msg_unpacked->img_addr;
 
-			// Optional: validate flash range here?
-			// if (!FLASHIF_IsInAllowedRegion(flash_addr, fwup_expected_size)) return DEV_CPDU_EXEC_FAIL;
-
-			// 3) Ensure target region is blank (0xFF) 
-			if (!FLASHIF_IsBlank(flash_addr, fwup_expected_size)) {
-				// Not empty -> cannot safely program without erase
+			// 2) Validate target range is within legal flash
+			if (!flash_range_is_within_flash(flash_addr, fwup_expected_size)) {
 				return DEV_CPDU_EXEC_FAIL;
 			}
 
-			// 4) Program flash (no erase)
+			// 3) Erase target region
+			if (FLASHIF_EraseRange(flash_addr, fwup_expected_size) != HAL_OK) {
+				return DEV_CPDU_EXEC_FAIL;
+			}
+
+			// 4) Program flash
 			if (FLASHIF_ProgramBuffer((uint32_t*)flash_addr,
-                      (uint32_t*)FWUP_STAGE_BASE,
-                      (fwup_expected_size + 3u) / 4u) != FLASHIF_OK) {
-				return DEV_CPDU_EXEC_FAIL;
+						(uint8_t*)FWUP_STAGE_BASE,
+						fwup_expected_size) != FLASHIF_OK) {
+				return IMG_SIZE_DISCREP;
 			}
 
-			// 5) Optional readback verify:
-			//    compute CRC32 over flash content and compare again
+			// 5) Readback verify
 			uint32_t flash_crc = crc32_calc((uint8_t*)flash_addr, fwup_expected_size);
 			if (flash_crc != fwup_expected_crc32) {
-				return DEV_CPDU_EXEC_FAIL;
+				return FLASH_CS_DISCREP;
 			}
 
-			// 6) Update FRAM metadata
-			// Store: img_id, flash_addr, size, crc32, plus "valid" flag if you have one.
+			// 6) Update FRAM metadata (active index set inside, commits g_work not old blk)
 			FRAMMETA_SetImageInfo(fwup_img_id,
 								flash_addr,
 								fwup_expected_size,

@@ -12,17 +12,10 @@
 #include <stddef.h>
 #include "stm32f7xx_hal.h"
 
-/* ---------- Addresses in FRAM ----------
- * Place the two A/B copies somewhere safe in your FRAM address space.
- * We base them off FRAM_SWEEP_TABLE_SECTION_START.
- * Each block is small (< 128 bytes for NUM_SLOTS=5), so 0x0100 spacing is plenty.
- */
-#ifndef FRAM_SWEEP_TABLE_SECTION_START
-# error "Define FRAM_SWEEP_TABLE_SECTION_START in FRAM.h (base FRAM address for metadata)."
-#endif
+/* ---------- FRAM A/B block ---------- */
 
-#define FRAM_BLK_A_ADDR  ((uint16_t)(FRAM_SWEEP_TABLE_SECTION_START))
-#define FRAM_BLK_B_ADDR  ((uint16_t)(FRAM_BLK_A_ADDR + 0x0100)) /* 256-byte stride */
+#define FRAM_BLK_A_ADDR  ((uint16_t)(FRAM_META_BLK_A_ADDR))
+#define FRAM_BLK_B_ADDR  ((uint16_t)(FRAM_META_BLK_B_ADDR))
 
 /* ---------- Constants ---------- */
 #define META_MAGIC 0x4D455441u  /* 'META' */
@@ -33,20 +26,11 @@
 /* ---------- Internal working copy ---------- */
 static fram_meta_block_t g_work;
 
-/* ---------- Low-level helpers ---------- */
-
-static inline uint16_t hdr_crc_region_len(void)
-{
-    // bytes from magic.._rsv (12 bytes total)
-    return 12u;
-}
 
 static uint16_t block_crc(const fram_meta_block_t* b)
 {
-    // CRC over header (magic.._rsv) then over all slot records, excluding crc16 itself.
-    uint16_t c = Calc_CRC16((uint8_t*)b, hdr_crc_region_len());
-    c = Calc_CRC16((uint8_t*)b->rec, (uint16_t)(NUM_SLOTS * 7u));
-    return c;
+    // CRC over all fields preceding crc16 — one contiguous region, no chaining needed
+    return Calc_CRC16((uint8_t*)b, offsetof(fram_meta_block_t, crc16));
 }
 
 static bool valid_blk(const fram_meta_block_t* b)
@@ -99,32 +83,21 @@ bool FRAMMETA_InitDefaults(uint8_t active_idx)
     g_work.active_idx = active_idx;
     g_work.commit     = META_WIP;   // set last
 
-    // Initialize all 5 records to a benign default
     for (uint8_t i = 0; i < NUM_SLOTS; i++) {
-        // Build a default 7-byte record using your packer
-        // Fields: crc(2) + new_metadata + boot_feedback + image_index + boot_counter + error_code
         uint8_t* raw = g_work.rec[i];
-        // Start from zeros
-        memset(raw, 0, 7);
+        memset(raw, 0, 20);
 
-        // Minimal reasonable defaults:
-        // new_metadata = YES for all except active (let bootloader know these are not confirmed)
-        // boot_feedback = BOOT_NEW_IMAGE (or 0)
-        // image_index = i+1
-        // boot_counter = 3
-        // error_code = 0
-        // NOTE:
-        // YES=1, NO=0, BOOT_NEW_IMAGE=?? — set to 1 as a placeholder if you prefer.
-        raw[2] = (i == (uint8_t)(active_idx-1)) ? 0 /*NO*/ : 1 /*YES*/;
-        raw[3] = 1;            // BOOT_NEW_IMAGE placeholder
-        raw[4] = (uint8_t)(i+1);
-        raw[5] = 3;            // boot_counter
-        raw[6] = 0;            // error_code
+        // flash_addr, image_size, image_crc32 default to 0 (unknown/empty)
+        raw[SLOT_OFF_BANK_ID]      = 0;
+        raw[SLOT_OFF_IMAGE_INDEX]  = (uint8_t)(i + 1);
+        raw[SLOT_OFF_BOOT_COUNTER] = 3;
+        raw[SLOT_OFF_BOOT_FB]      = 1;   // BOOT_NEW_IMAGE placeholder
+        raw[SLOT_OFF_NEW_META]     = (i == (uint8_t)(active_idx - 1)) ? 0 : 1;
+        raw[SLOT_OFF_ERROR_CODE]   = 0;
 
-        // Per-record CRC16 over bytes [2..6]
-        uint16_t rc = Calc_CRC16(&raw[2], 5);
-        raw[0] = (uint8_t)((rc >> 8) & 0xFF);
-        raw[1] = (uint8_t)(rc & 0xFF);
+        uint16_t rc = Calc_CRC16(&raw[2], SLOT_RECORD_DATA_LEN);
+        raw[SLOT_OFF_CRC16_HI] = (uint8_t)((rc >> 8) & 0xFF);
+        raw[SLOT_OFF_CRC16_LO] = (uint8_t)(rc & 0xFF);
     }
 
     g_work.crc16 = block_crc(&g_work);
@@ -205,7 +178,8 @@ bool FRAMMETA_SetImageInfo(uint8_t img_id,
     // Activate new image
     FRAMMETA_SetActiveIndex(img_id);
 
-    return FRAMMETA_CommitNext(&blk, cur_addr);
+    return FRAMMETA_CommitNext(NULL, cur_addr);  // NULL causes CommitNext to use g_work
+
 }
 
 void FRAMMETA_SetActiveIndex(uint8_t idx)
@@ -217,19 +191,37 @@ void FRAMMETA_SetSlot(uint8_t slot_idx,
                       uint32_t base_addr, uint32_t image_size, uint32_t image_crc, uint8_t bank_id,
                       uint8_t boot_feedback, uint8_t boot_counter, uint8_t new_metadata, uint8_t error_code)
 {
-    (void)base_addr; (void)image_size; (void)image_crc; (void)bank_id; // not stored in 7 bytes
     if (slot_idx < 1 || slot_idx > NUM_SLOTS) return;
+    uint8_t* raw = g_work.rec[slot_idx - 1];
 
-    uint8_t* raw = g_work.rec[slot_idx-1];
-    raw[2] = new_metadata;   // typically NO(0) if VALID/ACTIVE, YES(1) if pending,
-    raw[3] = boot_feedback;  // e.g., BOOT_NEW_IMAGE or BOOTED_OK, etc.
-    raw[4] = (uint8_t)slot_idx;
-    raw[5] = boot_counter;
-    raw[6] = error_code;
+    // [2..5]  flash_addr (LE)
+    raw[SLOT_OFF_FLASH_ADDR + 0] = (uint8_t)(base_addr        & 0xFF);
+    raw[SLOT_OFF_FLASH_ADDR + 1] = (uint8_t)((base_addr >> 8) & 0xFF);
+    raw[SLOT_OFF_FLASH_ADDR + 2] = (uint8_t)((base_addr >>16) & 0xFF);
+    raw[SLOT_OFF_FLASH_ADDR + 3] = (uint8_t)((base_addr >>24) & 0xFF);
 
-    uint16_t rc = Calc_CRC16(&raw[2], 5);
-    raw[0] = (uint8_t)((rc >> 8) & 0xFF);
-    raw[1] = (uint8_t)(rc & 0xFF);
+    // [6..9]  image_size (LE)
+    raw[SLOT_OFF_IMAGE_SIZE + 0] = (uint8_t)(image_size        & 0xFF);
+    raw[SLOT_OFF_IMAGE_SIZE + 1] = (uint8_t)((image_size >> 8) & 0xFF);
+    raw[SLOT_OFF_IMAGE_SIZE + 2] = (uint8_t)((image_size >>16) & 0xFF);
+    raw[SLOT_OFF_IMAGE_SIZE + 3] = (uint8_t)((image_size >>24) & 0xFF);
+
+    // [10..13] image_crc32 (LE)
+    raw[SLOT_OFF_IMAGE_CRC32 + 0] = (uint8_t)(image_crc        & 0xFF);
+    raw[SLOT_OFF_IMAGE_CRC32 + 1] = (uint8_t)((image_crc >> 8) & 0xFF);
+    raw[SLOT_OFF_IMAGE_CRC32 + 2] = (uint8_t)((image_crc >>16) & 0xFF);
+    raw[SLOT_OFF_IMAGE_CRC32 + 3] = (uint8_t)((image_crc >>24) & 0xFF);
+
+    raw[SLOT_OFF_BANK_ID]      = bank_id;
+    raw[SLOT_OFF_IMAGE_INDEX]  = (uint8_t)slot_idx;
+    raw[SLOT_OFF_BOOT_COUNTER] = boot_counter;
+    raw[SLOT_OFF_BOOT_FB]      = boot_feedback;
+    raw[SLOT_OFF_NEW_META]     = new_metadata;
+    raw[SLOT_OFF_ERROR_CODE]   = error_code;
+
+    uint16_t rc = Calc_CRC16(&raw[2], SLOT_RECORD_DATA_LEN);  // 18 bytes
+    raw[SLOT_OFF_CRC16_HI] = (uint8_t)((rc >> 8) & 0xFF);
+    raw[SLOT_OFF_CRC16_LO] = (uint8_t)(rc & 0xFF);
 }
 
 uint8_t FRAMMETA_GetActiveIndex(void)
@@ -237,10 +229,10 @@ uint8_t FRAMMETA_GetActiveIndex(void)
     return g_work.active_idx;
 }
 
-bool FRAMMETA_GetSlotRaw(uint8_t slot_idx, uint8_t out7[7])
+bool FRAMMETA_GetSlotRaw(uint8_t slot_idx, uint8_t out20[20])
 {
     if (slot_idx < 1 || slot_idx > NUM_SLOTS) return false;
-    if (out7) memcpy(out7, g_work.rec[slot_idx-1], 7);
+    if (out20) memcpy(out20, g_work.rec[slot_idx - 1], 20);
     return true;
 }
 
@@ -248,7 +240,7 @@ void FRAMMETA_RecalcSlotCRC(uint8_t slot_idx)
 {
     if (slot_idx < 1 || slot_idx > NUM_SLOTS) return;
     uint8_t* raw = g_work.rec[slot_idx-1];
-    uint16_t rc = Calc_CRC16(&raw[2], 5);
+    uint16_t rc = Calc_CRC16(&raw[2], SLOT_RECORD_DATA_LEN);
     raw[0] = (uint8_t)((rc >> 8) & 0xFF);
     raw[1] = (uint8_t)(rc & 0xFF);
 }

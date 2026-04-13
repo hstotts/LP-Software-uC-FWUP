@@ -5,7 +5,7 @@
  *      Author: haydenstotts
  */
 
-#include "flash_if.h"
+#include  "flash_if.h"
 #include "memory_map.h"
 extern IWDG_HandleTypeDef hiwdg;
 
@@ -19,7 +19,8 @@ typedef struct { uint32_t base, size; uint32_t hal_id; } sector_t;
 
 #define KB(x) ((uint32_t)(x) * 1024u)
 
-// --------------------- REMOVE AND REPLACE WITH MEMORY MAP.h ----------------------
+// Sector table: base and size are derived from memory_map.h definitions.
+// hal_id must remain here as it references HAL-layer FLASH_SECTOR_x constants.
 static const sector_t g_sectors[24] = {
     // Bank 1
     {0x08000000u, KB(16), FLASH_SECTOR_0},
@@ -126,14 +127,14 @@ HAL_StatusTypeDef FLASHIF_EraseRange(uint32_t base, uint32_t size)
     return st;
 }
 
-FLASHIF_StatusTypedef FLASHIF_ProgramBuffer(uint32_t *dst, uint32_t *src, uint32_t word_count)
+FLASHIF_StatusTypedef FLASHIF_ProgramBuffer(uint32_t *dst, const uint8_t *src, uint32_t byte_count)
 {
     HAL_StatusTypeDef st = HAL_FLASH_Unlock();
     if (st != HAL_OK) return st;
 
     uint32_t dst_addr = (uint32_t)dst;
-    const uint8_t *src8 = (const uint8_t *)src;
-    uint32_t len = word_count * 4u;
+    const uint8_t *src8 = src;
+    uint32_t len = byte_count;
 
     uint32_t acc = 0;
     while (len) {
