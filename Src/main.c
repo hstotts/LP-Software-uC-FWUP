@@ -202,6 +202,8 @@ int main(void)
   /* Initialize interrupts */
   MX_NVIC_Init();
   /* USER CODE BEGIN 2 */
+  HAL_Delay(500);   // allow I2C and FRAM to settle after boot
+  ConfirmBoot();    // tell the bootloader this image is healthy
 
   HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_RESET);
 

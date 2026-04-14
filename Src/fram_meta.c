@@ -245,3 +245,25 @@ void FRAMMETA_RecalcSlotCRC(uint8_t slot_idx)
     raw[1] = (uint8_t)(rc & 0xFF);
 }
 
+void ConfirmBoot(void)
+{
+    uint32_t cur_addr = 0;
+
+    // Load the current metadata — this also populates g_work
+    if (!FRAMMETA_Load(NULL, &cur_addr)) return;
+
+    uint8_t idx = g_work.active_idx;
+    if (idx < 1 || idx > NUM_SLOTS) return;
+
+    uint8_t* rec = g_work.rec[idx - 1];
+    rec[SLOT_OFF_BOOT_FB]      = 1;   // BOOTED_OK
+    rec[SLOT_OFF_BOOT_COUNTER] = 3;   // reset counter for next OTA cycle
+    rec[SLOT_OFF_ERROR_CODE]   = 0;   // NO_BOOT_ERROR
+
+    uint16_t rc = Calc_CRC16(&rec[2], SLOT_RECORD_DATA_LEN);
+    rec[SLOT_OFF_CRC16_HI] = (uint8_t)((rc >> 8) & 0xFF);
+    rec[SLOT_OFF_CRC16_LO] = (uint8_t)(rc & 0xFF);
+
+    FRAMMETA_CommitNext(NULL, cur_addr);
+}
+

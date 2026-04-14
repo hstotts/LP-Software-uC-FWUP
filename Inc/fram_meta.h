@@ -91,5 +91,9 @@ bool FRAMMETA_GetSlotRaw(uint8_t slot_idx, uint8_t out20[20]);
 /* Optional: helper to force-recompute per-slot record CRC (2 bytes on [2..6]) */
 void FRAMMETA_RecalcSlotCRC(uint8_t slot_idx);
 
+// Call once at startup after peripherals are ready.
+// Tells the bootloader this image booted successfully so it does not
+// decrement the boot counter or fall back to the golden image on next reset.
+void ConfirmBoot(void);
 
 #endif /* INC_FRAM_META_H_ */
