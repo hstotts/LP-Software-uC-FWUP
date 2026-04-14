@@ -44,3 +44,4 @@ HAL_StatusTypeDef readFRAM(uint16_t addr, uint8_t* buf, uint32_t size);
 
 SPP_error save_sweep_table_value_FRAM(uint8_t table_id, uint8_t step_id, uint16_t value);
 uint16_t read_sweep_table_value_FRAM(uint8_t table_id, uint8_t step_id);
+uint16_t Calc_CRC16(uint8_t* data, uint16_t length);

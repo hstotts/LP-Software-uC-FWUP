@@ -121,4 +121,6 @@ void Prepare_full_msg(SPP_header_t* resp_SPP_header,
 void FPGA_process_frame(const uint8_t *frame);
 void Handle_incoming_TC();
 
+uint32_t crc32_calc(const uint8_t* data, uint32_t length);
+
 #endif /* GENERAL_FUNCTIONS_H_ */

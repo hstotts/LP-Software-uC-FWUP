@@ -25,6 +25,18 @@ extern uint8_t UART_FPGA_OBC_Tx_Buffer[100];
 
 extern osThreadId Watchdog_TaskHandle;
 
+uint32_t crc32_calc(const uint8_t* data, uint32_t length)
+{
+    // CRC-32, poly=0xEDB88320, init=0xFFFFFFFF, final XOR=0xFFFFFFFF.
+    // Matches Python crcmod 'crc-32' in img2obc.py and Calc_CRC32 in the bootloader.
+    uint32_t crc = 0xFFFFFFFFu;
+    for (uint32_t i = 0; i < length; i++) {
+        crc ^= data[i];
+        for (uint8_t j = 0; j < 8; j++)
+            crc = (crc & 1u) ? ((crc >> 1) ^ 0xEDB88320u) : (crc >> 1);
+    }
+    return crc ^ 0xFFFFFFFFu;
+}
 
 uint16_t SPP_SEQUENCE_COUNTER = 0;
 

@@ -30,6 +30,26 @@ static uint16_t get_sweep_table_address(uint8_t save_id) {
     return addr;
 }
 
+static uint16_t CRC16_byte(uint16_t crc, uint8_t byte)
+{
+    for (uint8_t i = 0; i < 8; i++) {
+        if (((crc & 0x8000u) >> 8) ^ (byte & 0x80u))
+            crc = (crc << 1) ^ 0x1021u;
+        else
+            crc = (crc << 1);
+        byte <<= 1;
+    }
+    return crc;
+}
+
+uint16_t Calc_CRC16(uint8_t* data, uint16_t length)
+{
+    uint16_t crc = 0xFFFFu;
+    for (uint16_t i = 0; i < length; i++)
+        crc = CRC16_byte(crc, data[i]);
+    return crc;
+}
+
 SPP_error save_sweep_table_value_FRAM(uint8_t table_id, uint8_t step_id, uint16_t value) {
 
     uint16_t sweep_table_address = get_sweep_table_address(table_id);

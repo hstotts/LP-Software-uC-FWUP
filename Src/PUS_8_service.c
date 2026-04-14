@@ -13,6 +13,9 @@
 #include "PUS_1_service.h"
 #include "PUS_8_service.h"
 #include "FRAM.h"
+#include "flash_if.h"
+#include "memory_map.h"
+#include "fram_meta.h"
 
 #define FPGA_MSG_PREAMBLE_0     0xB5
 #define FPGA_MSG_PREAMBLE_1     0x43
@@ -348,7 +351,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			Sweep_Bias_Data_counter = 0;
 			Old_Sweep_Bias_Data_counter = 1;
 
-			memset(Sweep_Bias_Mode_Data, 0, sizeof(Sweep_Bias_Mode_Data));
+			memset((uint8_t*)Sweep_Bias_Mode_Data, 0, sizeof(Sweep_Bias_Mode_Data));
 
 			if (HAL_UART_Transmit(&huart5, msg, msg_cnt, 100)!= HAL_OK) {
 				HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
