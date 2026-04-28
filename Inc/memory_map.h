@@ -237,7 +237,7 @@ static inline int flash_range_is_within_flash(uint32_t base, uint32_t size)
 // ============================================================================
 // SRAM layout – STM32F767VIT
 // DTCM  128KB @ 0x20000000  – application stack/heap only
-// SRAM1 368KB @ 0x20020000  – general use; top 44KB reserved below
+// SRAM1 368KB @ 0x20020000  – general use; top 50KB reserved below
 // SRAM2  16KB @ 0x2007C000  – application use
 // ============================================================================
 
@@ -245,15 +245,14 @@ static inline int flash_range_is_within_flash(uint32_t base, uint32_t size)
 #define SRAM1_SIZE             0x0005C000u   // 368KB
 
 // Firmware staging buffer – holds one incoming OTA image
-#define SRAM_FW_STAGING_BASE   0x20071000u
-#define SRAM_FW_STAGING_SIZE   0x0000A000u   // 40KB
+#define SRAM_FW_STAGING_BASE   0x20068800u
+#define SRAM_FW_STAGING_SIZE   0x0000C800u   // 50KBs
 
 // Sweep table working buffer – 8 tables × 256 steps × 2 bytes
 #define SRAM_SWEEP_BUF_BASE    0x2007B000u
 #define SRAM_SWEEP_BUF_SIZE    0x00001000u   // 4KB
 
-// Sanity: staging + sweep = 44KB, fits within top of SRAM1
-// 0x20071000 + 0xA000 + 0x1000 = 0x2007C000 == SRAM1 top
+// Sanity: 0x20068800 + 0xC800 + 0x1000 = 0x2007C000 == SRAM1 top
 
 
 #ifdef __cplusplus

@@ -796,6 +796,13 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 				return DEV_CPDU_EXEC_FAIL;
 			}
 
+		    // Temporary: store erase result for diagnosis
+		    HAL_StatusTypeDef erase_result = FLASHIF_EraseRange(flash_addr, fwup_expected_size);
+		    if (erase_result != HAL_OK) {
+		        // Erase failed — check flash_addr and fwup_expected_size in debugger here
+		        return DEV_CPDU_EXEC_FAIL;
+		    }
+
 			// 4) Program flash
 			if (FLASHIF_ProgramBuffer((uint32_t*)flash_addr,
 						(uint8_t*)FWUP_STAGE_BASE,

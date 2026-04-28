@@ -10,11 +10,17 @@ HAL_StatusTypeDef readFRAM_DMA(uint16_t addr, uint8_t* buf, uint32_t size) {
 }
 
 HAL_StatusTypeDef writeFRAM(uint16_t addr, uint8_t* data, uint32_t size) {
-	return HAL_I2C_Mem_Write(&hi2c4, FRAM_I2C_ADDR, addr, 2, data, size, 50);
+    // Timeout scaled to transfer size: 2ms per byte, 500ms minimum.
+    // The 494-byte metadata block needs ~44ms at 100kHz — the old 50ms was too tight.
+    uint32_t timeout = size * 2u;
+    if (timeout < 500u) timeout = 500u;
+    return HAL_I2C_Mem_Write(&hi2c4, FRAM_I2C_ADDR, addr, 2, data, size, timeout);
 }
 
 HAL_StatusTypeDef readFRAM(uint16_t addr, uint8_t* buf, uint32_t size) {
-	return HAL_I2C_Mem_Read(&hi2c4, FRAM_I2C_ADDR_READ, addr, 2, buf, size, 50);
+    uint32_t timeout = size * 2u;
+    if (timeout < 500u) timeout = 500u;
+    return HAL_I2C_Mem_Read(&hi2c4, FRAM_I2C_ADDR_READ, addr, 2, buf, size, timeout);
 }
 
 static uint16_t get_sweep_table_address(uint8_t save_id) {
