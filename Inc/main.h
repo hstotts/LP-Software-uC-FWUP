@@ -71,6 +71,16 @@ void Error_Handler(void);
 #define LED4_GPIO_Port GPIOB
 #define LED3_Pin GPIO_PIN_6
 #define LED3_GPIO_Port GPIOB
+
+/* Software version — increment per the scheme in the ICD.
+ * MAJOR: breaking change (hardware rev, boot scheme).
+ * MINOR: new commands or OTA features, backward compatible.
+ * PATCH: bug fixes, no interface change.
+ * Reset lower fields to 0 on any upper-field bump.          */
+#define FW_VERSION_MAJOR  1u
+#define FW_VERSION_MINOR  0u
+#define FW_VERSION_PATCH  0u
+
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */

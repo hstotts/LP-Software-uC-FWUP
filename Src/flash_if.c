@@ -138,22 +138,20 @@ FLASHIF_StatusTypedef FLASHIF_ProgramBuffer(uint32_t *dst, const uint8_t *src, u
 
     uint32_t acc = 0;
     while (len) {
-        uint64_t q = 0xFFFFFFFFFFFFFFFFULL;
-        uint32_t n = (len >= 8u) ? 8u : len;
+        /* FLASH_TYPEPROGRAM_WORD (x32) requires only Vdd >= 2.7 V — no external
+           Vpp pin needed.  FLASH_TYPEPROGRAM_DOUBLEWORD (x64) silently does
+           nothing without an 8–9 V VAPP supply (STM32F767 RM0410 §3.6). */
+        uint32_t w = 0xFFFFFFFFu;
+        uint32_t n = (len >= 4u) ? 4u : len;
 
         for (uint32_t i = 0; i < n; i++) {
-            ((uint8_t*)&q)[i] = src8[i];
+            ((uint8_t*)&w)[i] = src8[i];
         }
 
-        st = HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, dst_addr, q);
+        st = HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, dst_addr, (uint64_t)w);
         if (st != HAL_OK) break;
 
-        if (*(volatile uint64_t*)dst_addr != q) {
-            st = HAL_ERROR;
-            break;
-        }
-
-        dst_addr += 8u;
+        dst_addr += 4u;
         src8 += n;
         len -= n;
         acc += n;

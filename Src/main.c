@@ -35,6 +35,7 @@
 #include "PUS_8_service.h"
 #include "PUS_17_service.h"
 #include "Device_State.h"
+#include "fram_meta.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/

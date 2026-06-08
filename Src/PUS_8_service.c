@@ -33,8 +33,8 @@
 #define NEW_APP_ADDRESS 0x08010000
 
 // ---------------------- FWUP State Machine --------------------------------
-#define FWUP_STAGE_BASE   0x20010000u   // SRAM staging base... TBD
-#define FWUP_STAGE_SIZE   (256u * 1024u)
+//#define FWUP_STAGE_BASE   0x20010000u   // SRAM staging base... TBD
+//#define FWUP_STAGE_SIZE   (256u * 1024u)
 
 static uint8_t  fwup_active = 0;
 static uint8_t  fwup_img_id = 0;
@@ -682,30 +682,37 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 
 		case JUMP_TO_IMAGE:
 		{
-			void (*app_reset_handler)(void);
-			uint32_t app_stack;
+			uint32_t target_addr = pus8_msg_unpacked->img_addr;
+			if (target_addr == 0) return DEV_CPDU_EXEC_FAIL;
 
-			// Set MSP and PC
-			app_stack = *(volatile uint32_t*)(NEW_APP_ADDRESS);
-			app_reset_handler = (void (*)(void)) (*(volatile uint32_t*)(NEW_APP_ADDRESS + 4));
+			// Validate it looks like a real flash image (stack in SRAM, PC in flash)
+			uint32_t app_stack   = *(volatile uint32_t*)(target_addr);
+			uint32_t app_pc      = *(volatile uint32_t*)(target_addr + 4);
+			if (app_stack < 0x20000000u || app_stack > 0x20080000u) return DEV_CPDU_EXEC_FAIL;
+			if (app_pc    < 0x08000000u || app_pc    > 0x081FFFFFu) return DEV_CPDU_EXEC_FAIL;
+
+			void (*app_reset_handler)(void) = (void (*)(void))app_pc;
 
 			PUS_1_send_succ_comp(SPP_h, PUS_TC_h);
+			osDelay(50);   // give UART time to flush the ACK
 
-			// wait for all other task to finish, to make sure no peripherals are in use
-			// TO DO: here the system should enter an ,,Jump to new image,, state
-			osDelay(10);
-
-			// Deinit and cleanup
+			// Tear down
 			HAL_DeInit();
 			SysTick->CTRL = 0;
 			SysTick->LOAD = 0;
 			SysTick->VAL  = 0;
 			__disable_irq();
-			NVIC->ICER[0] = 0xFFFFFFFF;
-			NVIC->ICPR[0] = 0xFFFFFFFF;
+			for (int i = 0; i < 8; i++) {
+				NVIC->ICER[i] = 0xFFFFFFFFu;
+				NVIC->ICPR[i] = 0xFFFFFFFFu;
+			}
 
-			__set_MSP(app_stack);  // Set main stack pointer
-			app_reset_handler();   // Jump to application
+			// Relocate vector table and jump
+			SCB->VTOR = target_addr;
+			__DSB();
+			__ISB();
+			__set_MSP(app_stack);
+			app_reset_handler();
 			break;
 		}
 //------------------------------ UPDATE CASES --------------------------------------------
@@ -720,7 +727,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			fwup_bytes_written = 0;
 
 			// hard safety check: must fit staging SRAM window
-			if (fwup_expected_size == 0 || fwup_expected_size > FWUP_STAGE_SIZE) {
+			if (fwup_expected_size == 0 || fwup_expected_size > SRAM_FW_STAGING_SIZE) {
 				fwup_active = 0;
 				return SRAM_IMG_DISCREP;  
 			}
@@ -746,13 +753,13 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			}
 
 			// Must land inside staging region
-			if (addr < FWUP_STAGE_BASE ||
-				(addr + len) > (FWUP_STAGE_BASE + FWUP_STAGE_SIZE)) {
+			if (addr < SRAM_FW_STAGING_BASE ||
+				(addr + len) > (SRAM_FW_STAGING_BASE + SRAM_FW_STAGING_SIZE)) {
 				return SRAM_BUFFER_FAIL;  // use better code??????
 			}
 
 			// Must not exceed the declared image size window
-			uint32_t rel_start = addr - FWUP_STAGE_BASE;
+			uint32_t rel_start = addr - SRAM_FW_STAGING_BASE;
 			if ((rel_start + len) > fwup_expected_size) {
 				return SRAM_IMG_DISCREP;
 			}
@@ -779,7 +786,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			}
 
 			// 1) Verify staged SRAM image CRC32
-			uint32_t calc = crc32_calc((uint8_t*)FWUP_STAGE_BASE, fwup_expected_size);
+			uint32_t calc = crc32_calc((uint8_t*)SRAM_FW_STAGING_BASE, fwup_expected_size);
 			if (calc != fwup_expected_crc32) {
 				return CS_DISCREP;
 			}
@@ -791,32 +798,39 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 				return DEV_CPDU_EXEC_FAIL;
 			}
 
-			// 3) Erase target region
+			// 3) Erase target region (ONCE)
 			if (FLASHIF_EraseRange(flash_addr, fwup_expected_size) != HAL_OK) {
 				return DEV_CPDU_EXEC_FAIL;
 			}
 
-		    // Temporary: store erase result for diagnosis
-		    HAL_StatusTypeDef erase_result = FLASHIF_EraseRange(flash_addr, fwup_expected_size);
-		    if (erase_result != HAL_OK) {
-		        // Erase failed — check flash_addr and fwup_expected_size in debugger here
-		        return DEV_CPDU_EXEC_FAIL;
-		    }
+			// 4) Flush D-Cache so physical SRAM contains the staged image
+			//    before FLASHIF_ProgramBuffer reads from it.
+			//    Size must be rounded up to the nearest 32-byte cache line.
+			uint32_t aligned_size = (fwup_expected_size + 31u) & ~31u;
+			SCB_CleanDCache_by_Addr((uint32_t*)SRAM_FW_STAGING_BASE, (int32_t)aligned_size);
 
-			// 4) Program flash
+			// 5) Program flash
 			if (FLASHIF_ProgramBuffer((uint32_t*)flash_addr,
-						(uint8_t*)FWUP_STAGE_BASE,
-						fwup_expected_size) != FLASHIF_OK) {
+									(uint8_t*)SRAM_FW_STAGING_BASE,
+									fwup_expected_size) != FLASHIF_OK) {
 				return IMG_SIZE_DISCREP;
 			}
 
-			// 5) Readback verify
+			// 6) Invalidate/reset ALL cache layers before readback
+			SCB_InvalidateICache();
+			SCB_InvalidateDCache_by_Addr((uint32_t*)flash_addr, (int32_t)aligned_size);
+			// ART accelerator reset — STM32F767 correct macros (stm32f7xx_hal_flash.h)
+			__HAL_FLASH_ART_DISABLE();
+			__HAL_FLASH_ART_RESET();
+			__HAL_FLASH_ART_ENABLE();
+
+			// 7) Readback verify
 			uint32_t flash_crc = crc32_calc((uint8_t*)flash_addr, fwup_expected_size);
 			if (flash_crc != fwup_expected_crc32) {
 				return FLASH_CS_DISCREP;
 			}
 
-			// 6) Update FRAM metadata (active index set inside, commits g_work not old blk)
+			// 8) Update FRAM metadata
 			FRAMMETA_SetImageInfo(fwup_img_id,
 								flash_addr,
 								fwup_expected_size,
@@ -827,6 +841,20 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			break;
 		}
 
+		case GET_VERSION:
+		{
+			UART_OUT_OBC_msg msg = {0};
+			msg.PUS_HEADER_PRESENT = 0;
+
+			msg.TM_data[0] = GET_VERSION;       
+			msg.TM_data[1] = FW_VERSION_MAJOR;
+			msg.TM_data[2] = FW_VERSION_MINOR;
+			msg.TM_data[3] = FW_VERSION_PATCH;
+			msg.TM_data_len = 4;
+
+			xQueueSend(UART_OBC_Out_Queue, &msg, portMAX_DELAY);
+			break;
+}
 		//-----------------------------------------------------------------------------------------
 
 

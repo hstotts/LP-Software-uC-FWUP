@@ -92,7 +92,7 @@ typedef enum {
     FWUP_FLASH                      = 0xF5,
 
     // GET_MD                       = 0xF6,
-    JUMP_TO_TI                      = 0xF7,
+    GET_VERSION                     = 0xF7,
     RESTART_BL                      = 0xF8,
 	// ----------------------------------------------------------------------------
 
