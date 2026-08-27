@@ -233,26 +233,83 @@ static inline int flash_range_is_within_flash(uint32_t base, uint32_t size)
     return 0;
 }
 
+// ---- Firmware deployment slot roles ----
+typedef enum {
+    FW_SLOT_ROLE_BOOTLOADER = 0,
+    FW_SLOT_ROLE_GOLDEN,
+    FW_SLOT_ROLE_OTA,
+    FW_SLOT_ROLE_RESERVED
+} fw_slot_role_t;
+
+typedef struct {
+    uint8_t        slot_id;
+    uint8_t        bank_id;     /* 0 = Bank 1, 1 = Bank 2 */
+    fw_slot_role_t role;
+    uint32_t       base;
+    uint32_t       capacity;
+} fw_slot_desc_t;
+
+static inline fw_slot_role_t fw_slot_role(uint8_t slot_id)
+{
+    if (slot_id >= 1u && slot_id <= 4u)
+        return FW_SLOT_ROLE_BOOTLOADER;
+
+    if (slot_id == 5u || slot_id == 17u)
+        return FW_SLOT_ROLE_GOLDEN;
+
+    if ((slot_id >= 6u && slot_id <= 12u) ||
+        (slot_id >= 18u && slot_id <= 24u))
+        return FW_SLOT_ROLE_OTA;
+
+    return FW_SLOT_ROLE_RESERVED;
+}
+
+static inline int fw_slot_get(uint8_t slot_id, fw_slot_desc_t* out)
+{
+    if (out == NULL || slot_id < 1u || slot_id > 24u)
+        return 0;
+
+    /* Metadata slot IDs are one-based and map directly to zero-based
+     * STM32 flash sector numbers. */
+    flash_sector_t sector = (flash_sector_t)(slot_id - 1u);
+
+    out->slot_id  = slot_id;
+    out->bank_id  = (sector <= SECTOR_11) ? 0u : 1u;
+    out->role     = fw_slot_role(slot_id);
+    out->base     = flash_sector_start(sector);
+    out->capacity = flash_sector_size(sector);
+
+    return out->base != 0u && out->capacity != 0u;
+}
+
 
 // ============================================================================
 // SRAM layout – STM32F767VIT
-// DTCM  128KB @ 0x20000000  – application stack/heap only
-// SRAM1 368KB @ 0x20020000  – general use; top 50KB reserved below
-// SRAM2  16KB @ 0x2007C000  – application use
+// 0x20020000..0x20059FFF: linked application RAM (232 KiB)
+// 0x2005A000..0x2005BFFF: reserved science-data space (8 KiB)
+// 0x2005C000..0x2007BFFF: firmware staging (128 KiB)
+// 0x2007C000..0x2007FFFF: SRAM2 / initial MSP
 // ============================================================================
 
-#define SRAM1_BASE             0x20020000u
-#define SRAM1_SIZE             0x0005C000u   // 368KB
+#define APP_SRAM_BASE          0x20020000u
+#define APP_SRAM_SIZE          0x0003A000u
+
+#define SRAM_SCIENCE_BASE      0x2005A000u
+#define SRAM_SCIENCE_SIZE      0x00002000u
 
 // Firmware staging buffer – holds one incoming OTA image
-#define SRAM_FW_STAGING_BASE   0x20068800u
-#define SRAM_FW_STAGING_SIZE   0x0000C800u   // 50KBs
+#define SRAM_FW_STAGING_BASE   0x2005C000u
+#define SRAM_FW_STAGING_SIZE   0x00020000u
 
-// Sweep table working buffer – 8 tables × 256 steps × 2 bytes
-#define SRAM_SWEEP_BUF_BASE    0x2007B000u
-#define SRAM_SWEEP_BUF_SIZE    0x00001000u   // 4KB
-
-// Sanity: 0x20068800 + 0xC800 + 0x1000 = 0x2007C000 == SRAM1 top
+#if (APP_SRAM_BASE + APP_SRAM_SIZE) != SRAM_SCIENCE_BASE
+#error "Application RAM must end at the science reserve"
+#endif
+#if (SRAM_SCIENCE_BASE + SRAM_SCIENCE_SIZE) != SRAM_FW_STAGING_BASE
+#error "Science reserve must end at firmware staging"
+#endif
+#if (SRAM_FW_STAGING_BASE + SRAM_FW_STAGING_SIZE) != 0x2007C000u
+#error "Firmware staging must end at SRAM2"
+#endif
 
 
 #ifdef __cplusplus

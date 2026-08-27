@@ -20,6 +20,7 @@
 // Function Management [8] subtype IDs
 typedef enum {
     FM_PERFORM_FUNCTION                    = 1,  // TC
+    FM_FUNCTION_REPORT                     = 2,  // TM (mission-defined)
 } PUS_FM_Subtype_ID;
 
 typedef struct {
@@ -51,8 +52,8 @@ typedef struct {
     uint32_t img_size;
     uint32_t img_crc32;
     uint32_t img_addr;
+    uint32_t sram_dest_addr;
     uint8_t  bank_id;
-    uint16_t sec_id;
 
     uint8_t  img_data[PUS_8_MAX_DATA_LEN];
     uint16_t img_data_len;
@@ -91,9 +92,8 @@ typedef enum {
     FWUP_SRAM_WRITE                 = 0xF4,
     FWUP_FLASH                      = 0xF5,
 
-    // GET_MD                       = 0xF6,
+    GET_BOOT_METADATA               = 0xF6,
     GET_VERSION                     = 0xF7,
-    RESTART_BL                      = 0xF8,
 	// ----------------------------------------------------------------------------
 
 
@@ -104,10 +104,10 @@ typedef enum {
     IMG_ID_ARG_ID    = 0x20, // u8
     IMG_SIZE_ARG_ID  = 0x21, // u32 LE
     IMG_CRC32_ARG_ID = 0x22, // u32 LE
-    IMG_ADDR_ARG_ID  = 0x23, // u32 LE (SRAM or FLASH depending on func)
-    BANK_ID_ARG_ID   = 0x24, // u8
-    SEC_ID_ARG_ID    = 0x25, // u16 LE (optional)
-    IMG_DATA_ARG_ID  = 0x26, // variable bytes (consume rest)
+    IMG_ADDR_ARG_ID       = 0x23, // u32 LE (FLASH address)
+    BANK_ID_ARG_ID        = 0x24, // u8
+    IMG_DATA_ARG_ID       = 0x26, // variable bytes (consume rest)
+    SRAM_DEST_ADDR_ARG_ID = 0x27, // u32 LE (SRAM staging destination)
 } FWUP_Arg_ID_t;
 // ----------------------------------------------------------------------------
 

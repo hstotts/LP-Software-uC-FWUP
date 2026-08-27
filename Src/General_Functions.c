@@ -23,8 +23,6 @@ extern UART_Rx_OBC_Msg UART_RxBuffer;
 extern uint8_t UART_TxBuffer[MAX_COBS_FRAME_LEN];
 extern uint8_t UART_FPGA_OBC_Tx_Buffer[100];
 
-extern osThreadId Watchdog_TaskHandle;
-
 uint32_t crc32_calc(const uint8_t* data, uint32_t length)
 {
     // CRC-32, poly=0xEDB88320, init=0xFFFFFFFF, final XOR=0xFFFFFFFF.
@@ -102,10 +100,20 @@ void Send_TM(SPP_header_t* resp_SPP_header,
 												packet_total_len,
 												response_TM_packet_COBS);
 
-    // Wait until the previous DMA transfer has finished
-    while (!uart_tx_OBC_done)
-	{
-		osDelay(1);
+    // Wait a bounded time for the previous DMA transfer to finish.
+	TickType_t wait_started = xTaskGetTickCount();
+	while (!uart_tx_OBC_done &&
+		   (xTaskGetTickCount() - wait_started) < pdMS_TO_TICKS(500u)) {
+		osDelay(1u);
+	}
+	if (!uart_tx_OBC_done) {
+		if (HAL_UART_AbortTransmit(&DEBUG_UART) != HAL_OK) {
+			BootHealth_RequestReset();
+			return;
+		}
+		/* Abort resets the HAL/DMA transmit state; the normal start below
+		 * immediately re-arms the pipeline with the current packet. */
+		uart_tx_OBC_done = 1u;
 	}
 
     // Mark the DMA pipeline busy
@@ -118,7 +126,7 @@ void Send_TM(SPP_header_t* resp_SPP_header,
 	if (HAL_UART_Transmit_DMA(&DEBUG_UART, UART_TxBuffer, cobs_packet_total_len) != HAL_OK) {
 		HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_SET);
 		uart_tx_OBC_done = 1;  // Reset flag on failure
-		vTaskSuspend(Watchdog_TaskHandle);
+		BootHealth_RequestReset();
 	}
 }
 
@@ -409,6 +417,16 @@ void Handle_incoming_TC() {
 		return;
 	}
 
+	if (SPP_header.secondary_header_flag &&
+		SPP_header.packet_data_length <
+			(PUS_TC_HEADER_LEN_WO_SPARE + CRC_BYTE_LEN - 1u)) {
+		/* CCSDS stores packet-data octets minus one. This admits a valid
+		 * zero-argument PUS-17 packet while making both subtractions safe. */
+		PUS_1_send_fail_acc(&SPP_header, &Error_PUS_TC_Header,
+						&PUS_1_Fail_Acc_Data, INVALID_PLENGTH);
+		return;
+	}
+
 
     // Decode PUS header if present
     if (SPP_header.secondary_header_flag) {
@@ -424,7 +442,7 @@ void Handle_incoming_TC() {
 		uint8_t* data = decoded_msg + SPP_HEADER_LEN + PUS_TC_HEADER_LEN_WO_SPARE;
 		uint8_t data_size = SPP_header.packet_data_length - PUS_TC_HEADER_LEN_WO_SPARE - 1;
 
-		uint8_t result = NO_ERROR;
+		uint16_t result = NO_ERROR;
 
 		if (PUS_TC_header.service_type_id == HOUSEKEEPING_SERVICE_ID) {
 			result = PUS_3_handle_HK_TC(&SPP_header, &PUS_TC_header, data, data_size);
@@ -445,4 +463,3 @@ void Handle_incoming_TC() {
 		}
     }
 }
-

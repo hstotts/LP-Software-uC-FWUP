@@ -63,6 +63,9 @@
 
 #include "stm32f7xx.h"
 
+/* The linker places the interrupt vector table at the image's FLASH origin. */
+extern uint32_t g_pfnVectors[];
+
 #if !defined  (HSE_VALUE) 
   #define HSE_VALUE    ((uint32_t)25000000) /*!< Default value of the External oscillator in Hz */
 #endif /* HSE_VALUE */
@@ -86,14 +89,6 @@
 /** @addtogroup STM32F7xx_System_Private_Defines
   * @{
   */
-
-/************************* Miscellaneous Configuration ************************/
-
-/*!< Uncomment the following line if you need to relocate your vector Table in
-     Internal SRAM. */
-/* #define VECT_TAB_SRAM */
-#define VECT_TAB_OFFSET  0x00010000u  // Golden image lives at 0x08010000
-/******************************************************************************/
 
 /**
   * @}
@@ -171,12 +166,8 @@ void SystemInit(void)
   /* Disable all interrupts */
   RCC->CIR = 0x00000000;
 
-  /* Configure the Vector Table location add offset address ------------------*/
-#ifdef VECT_TAB_SRAM
-  SCB->VTOR = RAMDTCM_BASE | VECT_TAB_OFFSET; /* Vector Table Relocation in Internal SRAM */
-#else
-  SCB->VTOR = FLASH_BASE | VECT_TAB_OFFSET; /* Vector Table Relocation in Internal FLASH */
-#endif
+  /* Follow the vector table's link-time placement for this slot-specific image. */
+  SCB->VTOR = (uint32_t)&g_pfnVectors[0];
 }
 
 /**

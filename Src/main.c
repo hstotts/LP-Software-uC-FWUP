@@ -89,9 +89,34 @@ osThreadId Watchdog_TaskHandle;
 
 #define UART_MAX_RETRIES 3
 
+#define BOOT_HEALTH_OBC_RX_ARM  (1u << 0)
+#define BOOT_HEALTH_FPGA_RX_ARM (1u << 1)
+#define BOOT_HEALTH_WATCHDOG    (1u << 2)
+#define BOOT_HEALTH_REQUIRED    (BOOT_HEALTH_OBC_RX_ARM | \
+                                 BOOT_HEALTH_FPGA_RX_ARM | \
+                                 BOOT_HEALTH_WATCHDOG)
 
-uint16_t HK_SPP_APP_ID = 0;  
+#define APP_DIAG_MAGIC 0x41444941u /* "ADIA" */
+
+typedef struct {
+	uint32_t magic;
+	uint32_t boot_count;
+	uint32_t previous_stage;
+	uint32_t current_stage;
+	uint32_t cfsr;
+	uint32_t hfsr;
+} app_diag_t;
+
+volatile app_diag_t g_app_diag
+	__attribute__((section(".noinit.app_diag"), aligned(8), used));
+
+
+uint16_t HK_SPP_APP_ID = 0;
 uint16_t HK_PUS_SOURCE_ID = 0;
+
+volatile uint8_t g_boot_confirmed = 0;  // 1 = ConfirmBoot() persisted to FRAM (reported in GET_VERSION TM)
+static volatile uint32_t g_boot_health_flags = 0u;
+static volatile uint8_t g_boot_health_failed = 0u;
 
 extern QueueHandle_t UART_OBC_Out_Queue;
 extern QueueHandle_t PUS_3_Queue;
@@ -137,11 +162,86 @@ void handle_Watchdog(void const * argument);
 
 static void MX_NVIC_Init(void);
 /* USER CODE BEGIN PFP */
+static bool arm_obc_receive(void);
+static bool arm_fpga_receive(void);
+static void app_diag_stage(uint32_t stage);
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+static void app_diag_begin(void)
+{
+	uint32_t previous = 0u;
+	uint32_t count = 0u;
+	if (g_app_diag.magic == APP_DIAG_MAGIC) {
+		previous = g_app_diag.current_stage;
+		count = g_app_diag.boot_count;
+	}
+	g_app_diag.magic = APP_DIAG_MAGIC;
+	g_app_diag.boot_count = count + 1u;
+	g_app_diag.previous_stage = previous;
+	g_app_diag.current_stage = 1u;
+	g_app_diag.cfsr = 0u;
+	g_app_diag.hfsr = 0u;
+	__DMB();
+}
+
+static void app_diag_stage(uint32_t stage)
+{
+	g_app_diag.current_stage = stage;
+	__DMB();
+}
+
+void BootHealth_RequestReset(void)
+{
+	g_boot_health_failed = 1u;
+	__DMB();
+}
+
+bool BootHealth_RefreshIWDG(void)
+{
+	if (g_boot_health_failed) {
+		return false;
+	}
+
+	return HAL_IWDG_Refresh(&hiwdg) == HAL_OK;
+}
+
+void AppDiag_RecordFault(uint32_t fault_kind)
+{
+	g_app_diag.current_stage = 0x80000000u | fault_kind;
+	g_app_diag.cfsr = SCB->CFSR;
+	g_app_diag.hfsr = SCB->HFSR;
+	__DMB();
+}
+
+static bool arm_obc_receive(void)
+{
+	for (uint32_t attempt = 0u; attempt < UART_MAX_RETRIES; attempt++) {
+		__HAL_UART_CLEAR_FLAG(&DEBUG_UART, UART_FLAG_ORE);
+		__HAL_UART_CLEAR_FLAG(&DEBUG_UART, UART_FLAG_NE);
+		__HAL_UART_CLEAR_FLAG(&DEBUG_UART, UART_FLAG_FE);
+		if (HAL_UART_Receive_IT(&DEBUG_UART, (uint8_t*)&UART_recv_char, 1u) == HAL_OK) {
+			return true;
+		}
+		osDelay(10u);
+	}
+	return false;
+}
+
+static bool arm_fpga_receive(void)
+{
+	for (uint32_t attempt = 0u; attempt < UART_MAX_RETRIES; attempt++) {
+		if (HAL_UART_Receive_DMA(&huart5, UART_FPGA_Rx_Buffer,
+						  FPGA_FRAME_LEN) == HAL_OK) {
+			return true;
+		}
+		osDelay(10u);
+	}
+	return false;
+}
 
 /* USER CODE END 0 */
 
@@ -152,21 +252,22 @@ static void MX_NVIC_Init(void);
 int main(void)
 {
   /* USER CODE BEGIN 1 */
-	HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_RESET);
+	/* The bootloader intentionally hands off with PRIMASK set. This also keeps
+	 * a directly programmed/JTAG-started application independent of BL state. */
+	__enable_irq();
+	app_diag_begin();
 
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
+  app_diag_stage(2u);
+  if (HAL_Init() != HAL_OK) {
+    Error_Handler();
+  }
 
   /* USER CODE BEGIN Init */
-
-  // This condition checks if the system has reset because the IWDG was not refreshed in time
-  if (__HAL_RCC_GET_FLAG(RCC_FLAG_IWDGRST)) {
-      __HAL_RCC_CLEAR_RESET_FLAGS();  // Clear reset flags
-  }
 
   // This line is very IMPORTANT because it also pauses the hardware watchdog when in debug mode,
   // thus allowing for a proper analysis of the system state (ex: science data buffer)
@@ -185,6 +286,7 @@ int main(void)
   /* USER CODE END Init */
 
   /* Configure the system clock */
+  app_diag_stage(3u);
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
@@ -192,19 +294,26 @@ int main(void)
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
+  app_diag_stage(4u);
   MX_GPIO_Init();
+  app_diag_stage(5u);
   MX_DMA_Init();
+  app_diag_stage(6u);
   MX_FMC_Init();
+  app_diag_stage(7u);
   MX_I2C4_Init();
+  app_diag_stage(8u);
   MX_UART4_Init();
+  app_diag_stage(9u);
   MX_UART5_Init();
+  app_diag_stage(10u);
   MX_IWDG_Init();
 
   /* Initialize interrupts */
   MX_NVIC_Init();
+  app_diag_stage(11u);
   /* USER CODE BEGIN 2 */
-  HAL_Delay(500);   // allow I2C and FRAM to settle after boot
-  ConfirmBoot();    // tell the bootloader this image is healthy
+  /* Boot confirmation occurs after the scheduler and watchdog health interval. */
 
   HAL_GPIO_WritePin(GPIOB, LED4_Pin|LED3_Pin, GPIO_PIN_RESET);
 
@@ -255,6 +364,24 @@ int main(void)
   /* definition and creation of Watchdog_Task */
   osThreadDef(Watchdog_Task, handle_Watchdog, osPriorityLow, 0, 128);
   Watchdog_TaskHandle = osThreadCreate(osThread(Watchdog_Task), NULL);
+
+  if (FPGA_IN_Queue == NULL ||
+      UART_OBC_Out_Queue == NULL ||
+      PUS_3_Queue == NULL ||
+      PUS_8_Queue == NULL ||
+      PUS_3_TaskHandle == NULL ||
+      UART_OBC_INHandle == NULL ||
+      PUS_8_TaskHandle == NULL ||
+      UART_OBC_OUTHandle == NULL ||
+      UART_FPGA_INHandle == NULL ||
+      FPGA_DispatcherHandle == NULL ||
+      Watchdog_TaskHandle == NULL) {
+    while (1) {
+      /* The running IWDG resets into the bootloader. */
+    }
+  }
+
+  app_diag_stage(12u);
 
   /* USER CODE BEGIN RTOS_THREADS */
     /* add threads, ... */
@@ -409,7 +536,7 @@ static void MX_IWDG_Init(void)
 
   /* USER CODE END IWDG_Init 1 */
   hiwdg.Instance = IWDG;
-  hiwdg.Init.Prescaler = IWDG_PRESCALER_64;
+  hiwdg.Init.Prescaler = IWDG_PRESCALER_128;
   hiwdg.Init.Window = 4095;
   hiwdg.Init.Reload = 4095;
   if (HAL_IWDG_Init(&hiwdg) != HAL_OK)
@@ -740,13 +867,10 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 					uart_status = HAL_UART_Receive_IT(&DEBUG_UART,(uint8_t*) &UART_recv_char, 1);
 					retry_count++;
 
-					if (uart_status != HAL_OK) {
-						osDelay(10); // Small delay between retries
-					}
 				} while (uart_status != HAL_OK && retry_count < UART_MAX_RETRIES);
 
 				if (uart_status != HAL_OK) {
-					vTaskSuspend(Watchdog_TaskHandle);  // Let watchdog trigger reset
+					BootHealth_RequestReset();
 				}
 			}
 		}
@@ -762,6 +886,24 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
     	uart_tx_FPGA_done = 1;  // Mark transmission as complete
 	}
 }
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+    if (huart == &DEBUG_UART) {
+        UART_recv_count = 0;
+        UART_recv_char  = 0xFF;
+        HAL_StatusTypeDef status = HAL_ERROR;
+        for (uint32_t attempt = 0u;
+             attempt < UART_MAX_RETRIES && status != HAL_OK;
+             attempt++) {
+            Clear_UART_Errors(&DEBUG_UART);
+            status = HAL_UART_Receive_IT(
+                &DEBUG_UART, (uint8_t*)&UART_recv_char, 1u);
+        }
+        if (status != HAL_OK) {
+            BootHealth_RequestReset();
+        }
+    }
+}
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_handle_PUS_3_Service */
@@ -776,7 +918,6 @@ void handle_PUS_3_Service(void const * argument)
 
   /* USER CODE BEGIN 5 */
 
-    uint32_t current_ticks = 0;
     // uint8_t periodic_report = 0;
     PUS_3_msg pus3_msg_received;
     TM_Err_Codes result;
@@ -790,7 +931,6 @@ void handle_PUS_3_Service(void const * argument)
           
     			if(result == NO_ERROR)
     			{
-    				current_ticks = xTaskGetTickCount();
             PUS_1_send_succ_comp(&pus3_msg_received.SPP_header, &pus3_msg_received.PUS_TC_header);
     			}
     			else
@@ -818,7 +958,11 @@ void handle_UART_IN_OBC(void const * argument)
 	// Clear Overrun Error, Noise Error, and Framing Error flags
 	Clear_UART_Errors(&DEBUG_UART);
 
-	HAL_UART_Receive_IT(&DEBUG_UART,(uint8_t*) &UART_recv_char, 1);
+	if (arm_obc_receive()) {
+		g_boot_health_flags |= BOOT_HEALTH_OBC_RX_ARM;
+	} else {
+		BootHealth_RequestReset();
+	}
 
 	/* Infinite loop */
 	for(;;)
@@ -861,7 +1005,7 @@ void handle_UART_IN_OBC(void const * argument)
 					} while (uart_status != HAL_OK && retry_count < UART_MAX_RETRIES);
 
 					if (uart_status != HAL_OK) {
-					    vTaskSuspend(Watchdog_TaskHandle);  // Let watchdog trigger reset
+					    BootHealth_RequestReset();
 					}
 				}
 			}
@@ -955,7 +1099,11 @@ void handle_UART_IN_FPGA(void const * argument)
 {
   /* USER CODE BEGIN handle_UART_IN_FPGA */
 
-	HAL_UART_Receive_DMA(&huart5, UART_FPGA_Rx_Buffer, FPGA_FRAME_LEN);
+	if (arm_fpga_receive()) {
+		g_boot_health_flags |= BOOT_HEALTH_FPGA_RX_ARM;
+	} else {
+		BootHealth_RequestReset();
+	}
   static uint8_t realign_len = 0;
 
   /* Infinite loop */
@@ -1104,12 +1252,39 @@ void handle_FPGA_Dispatcher(void const * argument)
 void handle_Watchdog(void const * argument)
 {
   /* USER CODE BEGIN handle_Watchdog */
+  TickType_t next_confirm_attempt = 0u;
+
   /* Infinite loop */
 	for(;;)
 	{
-		// This task has the lowest priority and if available to run, will reset the internal hardware watchdog
-	  HAL_IWDG_Refresh(&hiwdg);  // Refresh watchdog
-	  osDelay(1000);
+	  if (g_boot_health_failed) {
+		  /* The reset latch also suppresses refreshes in FRAM and flash code. */
+		  osDelay(1000u);
+		  continue;
+	  }
+
+	  if (!BootHealth_RefreshIWDG()) {
+		  BootHealth_RequestReset();
+		  continue;
+	  }
+
+	  /* Require the lowest-priority task to yield and run again before it may
+	   * satisfy the boot-health gate. */
+	  osDelay(1000u);
+	  if (g_boot_health_failed) {
+		  continue;
+	  }
+	  g_boot_health_flags |= BOOT_HEALTH_WATCHDOG;
+
+	  TickType_t now = xTaskGetTickCount();
+	  if (!g_boot_health_failed &&
+		  !g_boot_confirmed &&
+		  (g_boot_health_flags & BOOT_HEALTH_REQUIRED) == BOOT_HEALTH_REQUIRED &&
+		  (int32_t)(now - next_confirm_attempt) >= 0) {
+		  g_boot_confirmed = ConfirmBoot() ? 1u : 0u;
+		  next_confirm_attempt =
+			  xTaskGetTickCount() + pdMS_TO_TICKS(5000u);
+	  }
 	}
   /* USER CODE END handle_Watchdog */
 }
@@ -1142,8 +1317,14 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-    /* User can add his own implementation to report the HAL error return state */
-
+	g_app_diag.current_stage |= 0x80000000u;
+	g_app_diag.cfsr = SCB->CFSR;
+	g_app_diag.hfsr = SCB->HFSR;
+	__DMB();
+	__disable_irq();
+	/* The bootloader-started IWDG resets the device. Never continue startup
+	 * after a failed HAL initialization. */
+	while (1) { }
   /* USER CODE END Error_Handler_Debug */
 }
 

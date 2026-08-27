@@ -32,6 +32,28 @@ typedef struct __attribute__((packed)) {
     uint16_t crc16;        // CRC16-CCITT over [magic.._rsv] + rec[] (excl. this field)
 } fram_meta_block_t;
 
+/* Read-only health of each redundant FRAM metadata copy.  These numeric
+ * values are also used by the GET_BOOT_METADATA wire report. */
+typedef enum {
+    FRAMMETA_COPY_VALID    = 0,
+    FRAMMETA_COPY_INVALID  = 1,
+    FRAMMETA_COPY_IO_ERROR = 2,
+} fram_meta_copy_status_t;
+
+typedef enum {
+    FRAMMETA_SELECTED_NONE = 0,
+    FRAMMETA_SELECTED_A    = 1,
+    FRAMMETA_SELECTED_B    = 2,
+} fram_meta_selected_copy_t;
+
+typedef struct {
+    fram_meta_block_t          copy_a;
+    fram_meta_block_t          copy_b;
+    fram_meta_copy_status_t    copy_a_status;
+    fram_meta_copy_status_t    copy_b_status;
+    fram_meta_selected_copy_t  selected_copy;
+} fram_meta_snapshot_t;
+
 
 /* Per-slot record byte offsets (within each rec[i][20] array) */
 #define SLOT_OFF_CRC16_HI     0   // CRC16 high byte (over bytes [2..19])
@@ -54,6 +76,10 @@ typedef struct __attribute__((packed)) {
 // Returns true if a valid committed block is found.
 bool FRAMMETA_Load(fram_meta_block_t* out, uint32_t* cur_addr);
 
+// Read and classify both A/B copies without changing g_work or writing FRAM.
+// Returns true when at least one valid committed copy was selected.
+bool FRAMMETA_ReadSnapshot(fram_meta_snapshot_t* out);
+
 // Initialize FRAM with a default block (first-time or full repair).
 // active_idx is set to the image you want to boot by default (e.g., 4 for S5 current app).
 bool FRAMMETA_InitDefaults(uint8_t active_idx);
@@ -67,6 +93,9 @@ bool FRAMMETA_SetImageInfo(uint8_t img_id,
                            uint32_t image_size,
                            uint32_t image_crc,
                            uint8_t bank_id);
+
+// Select an existing image as a fresh pending boot and commit the change.
+bool FRAMMETA_ActivateImage(uint8_t img_id);
 
 // Convenience mutators that modify an in-RAM working copy (stored internally).
 // After calling setters, call FRAMMETA_CommitNext() to persist.
@@ -94,6 +123,7 @@ void FRAMMETA_RecalcSlotCRC(uint8_t slot_idx);
 // Call once at startup after peripherals are ready.
 // Tells the bootloader this image booted successfully so it does not
 // decrement the boot counter or fall back to the golden image on next reset.
-void ConfirmBoot(void);
+// Returns true if the confirmation was persisted to FRAM, false otherwise.
+bool ConfirmBoot(void);
 
 #endif /* INC_FRAM_META_H_ */

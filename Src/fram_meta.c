@@ -11,6 +11,7 @@
 #include <string.h>
 #include <stddef.h>
 #include "stm32f7xx_hal.h"
+#include "General_Functions.h"
 
 /* ---------- FRAM A/B block ---------- */
 
@@ -22,6 +23,7 @@
 #define META_VER   1
 #define META_WIP   0xFFu
 #define META_OK    0xA5u
+#define FRAMMETA_ATTEMPTS 2u
 
 /* ---------- Internal working copy ---------- */
 static fram_meta_block_t g_work;
@@ -41,17 +43,103 @@ static bool valid_blk(const fram_meta_block_t* b)
     return block_crc(b) == b->crc16;
 }
 
-static bool read_blk(uint16_t addr, fram_meta_block_t* out)
+static void recover_fram_bus(void)
 {
-    return readFRAM(addr, (uint8_t*)out, sizeof(*out)) == HAL_OK;
+    (void)HAL_I2C_DeInit(&hi2c4);
+    HAL_Delay(2u);
+    (void)HAL_I2C_Init(&hi2c4);
 }
 
-static bool write_blk(uint16_t addr, const fram_meta_block_t* in)
+static bool read_blk(uint16_t addr, fram_meta_block_t* out)
 {
-    return writeFRAM(addr, (uint8_t*)in, sizeof(*in)) == HAL_OK;
+    for (uint32_t attempt = 0u; attempt < FRAMMETA_ATTEMPTS; attempt++) {
+        (void)BootHealth_RefreshIWDG();
+        if (readFRAM(addr, (uint8_t*)out, sizeof(*out)) == HAL_OK) {
+            return true;
+        }
+        if (attempt + 1u < FRAMMETA_ATTEMPTS) {
+            recover_fram_bus();
+        }
+    }
+    return false;
+}
+
+static bool commit_copy(uint16_t addr, const fram_meta_block_t* in)
+{
+    for (uint32_t attempt = 0u; attempt < FRAMMETA_ATTEMPTS; attempt++) {
+        fram_meta_block_t tmp = *in;
+        tmp.commit = META_WIP;
+
+        (void)BootHealth_RefreshIWDG();
+
+        bool ok = writeFRAM(addr, (uint8_t*)&tmp, sizeof(tmp)) == HAL_OK;
+        uint8_t commit = META_OK;
+        if (ok) {
+            (void)BootHealth_RefreshIWDG();
+            ok = writeFRAM(
+                (uint16_t)(addr + offsetof(fram_meta_block_t, commit)),
+                &commit, 1u) == HAL_OK;
+        }
+
+        fram_meta_block_t check;
+        if (ok) {
+            (void)BootHealth_RefreshIWDG();
+            ok = readFRAM(addr, (uint8_t*)&check, sizeof(check)) == HAL_OK &&
+                 valid_blk(&check);
+        }
+
+        if (ok) {
+            g_work = check;
+            return true;
+        }
+        if (attempt + 1u < FRAMMETA_ATTEMPTS) {
+            recover_fram_bus();
+        }
+    }
+    return false;
 }
 
 /* ---------- Public API ---------- */
+
+bool FRAMMETA_ReadSnapshot(fram_meta_snapshot_t* out)
+{
+    if (out == NULL) {
+        return false;
+    }
+
+    memset(out, 0, sizeof(*out));
+    out->selected_copy = FRAMMETA_SELECTED_NONE;
+
+    bool read_a_ok = read_blk(FRAM_BLK_A_ADDR, &out->copy_a);
+    bool read_b_ok = read_blk(FRAM_BLK_B_ADDR, &out->copy_b);
+
+    out->copy_a_status = !read_a_ok
+                       ? FRAMMETA_COPY_IO_ERROR
+                       : (valid_blk(&out->copy_a)
+                          ? FRAMMETA_COPY_VALID
+                          : FRAMMETA_COPY_INVALID);
+    out->copy_b_status = !read_b_ok
+                       ? FRAMMETA_COPY_IO_ERROR
+                       : (valid_blk(&out->copy_b)
+                          ? FRAMMETA_COPY_VALID
+                          : FRAMMETA_COPY_INVALID);
+
+    bool valid_a = out->copy_a_status == FRAMMETA_COPY_VALID;
+    bool valid_b = out->copy_b_status == FRAMMETA_COPY_VALID;
+
+    if (valid_a && valid_b) {
+        out->selected_copy =
+            ((int16_t)(out->copy_b.seq - out->copy_a.seq) > 0)
+            ? FRAMMETA_SELECTED_B
+            : FRAMMETA_SELECTED_A;
+    } else if (valid_a) {
+        out->selected_copy = FRAMMETA_SELECTED_A;
+    } else if (valid_b) {
+        out->selected_copy = FRAMMETA_SELECTED_B;
+    }
+
+    return out->selected_copy != FRAMMETA_SELECTED_NONE;
+}
 
 bool FRAMMETA_Load(fram_meta_block_t* out, uint32_t* cur_addr)
 {
@@ -63,13 +151,19 @@ bool FRAMMETA_Load(fram_meta_block_t* out, uint32_t* cur_addr)
 
     if (va && vb) {
         // pick newest by seq
-        if (B.seq > A.seq) { if (out) *out = B; if (cur_addr) *cur_addr = FRAM_BLK_B_ADDR; g_work = B; }
+        if ((int16_t)(B.seq - A.seq) > 0) { if (out) *out = B; if (cur_addr) *cur_addr = FRAM_BLK_B_ADDR; g_work = B; }
         else               { if (out) *out = A; if (cur_addr) *cur_addr = FRAM_BLK_A_ADDR; g_work = A; }
         return true;
     } else if (va) {
-        if (out) *out = A; if (cur_addr) *cur_addr = FRAM_BLK_A_ADDR; g_work = A; return true;
+        if (out) *out = A;
+        if (cur_addr) *cur_addr = FRAM_BLK_A_ADDR;
+        g_work = A;
+        return true;
     } else if (vb) {
-        if (out) *out = B; if (cur_addr) *cur_addr = FRAM_BLK_B_ADDR; g_work = B; return true;
+        if (out) *out = B;
+        if (cur_addr) *cur_addr = FRAM_BLK_B_ADDR;
+        g_work = B;
+        return true;
     }
     return false;
 }
@@ -81,7 +175,6 @@ bool FRAMMETA_InitDefaults(uint8_t active_idx)
     g_work.version    = META_VER;
     g_work.seq        = 1;
     g_work.active_idx = active_idx;
-    g_work.commit     = META_WIP;   // set last
 
     for (uint8_t i = 0; i < NUM_SLOTS; i++) {
         uint8_t* raw = g_work.rec[i];
@@ -91,8 +184,8 @@ bool FRAMMETA_InitDefaults(uint8_t active_idx)
         raw[SLOT_OFF_BANK_ID]      = 0;
         raw[SLOT_OFF_IMAGE_INDEX]  = (uint8_t)(i + 1);
         raw[SLOT_OFF_BOOT_COUNTER] = 3;
-        raw[SLOT_OFF_BOOT_FB]      = 1;   // BOOT_NEW_IMAGE placeholder
-        raw[SLOT_OFF_NEW_META]     = (i == (uint8_t)(active_idx - 1)) ? 0 : 1;
+        raw[SLOT_OFF_BOOT_FB]      = 0;   // BOOT_NEW_IMAGE (matches bootloader FRAM.h)
+        raw[SLOT_OFF_NEW_META]     = (i == (uint8_t)(active_idx - 1)) ? 1 : 0;
         raw[SLOT_OFF_ERROR_CODE]   = 0;
 
         uint16_t rc = Calc_CRC16(&raw[2], SLOT_RECORD_DATA_LEN);
@@ -100,39 +193,24 @@ bool FRAMMETA_InitDefaults(uint8_t active_idx)
         raw[SLOT_OFF_CRC16_LO] = (uint8_t)(rc & 0xFF);
     }
 
-    g_work.crc16 = block_crc(&g_work);
+    // Compute CRC with commit = META_OK so it matches the final committed state
+    g_work.commit = META_OK;
+    g_work.crc16  = block_crc(&g_work);
 
-    // Write to A, then set commit byte LAST
-    if (!write_blk(FRAM_BLK_A_ADDR, &g_work)) return false;
-    uint8_t ok = META_OK;
-    if (writeFRAM(FRAM_BLK_A_ADDR + offsetof(fram_meta_block_t, commit), &ok, 1) != HAL_OK) return false;
-
-    // Cache as current
-    return true;
+    return commit_copy(FRAM_BLK_A_ADDR, &g_work);
 }
 
 bool FRAMMETA_CommitNext(const fram_meta_block_t* next_in, uint32_t cur_addr)
 {
 	fram_meta_block_t tmp = next_in ? *next_in : g_work;  /* commit the in-RAM working copy */
-    tmp.commit = META_WIP;                 // ensure not committed yet
     tmp.seq    = (uint16_t)(tmp.seq + 1);  // next generation
+
+    // Compute CRC with commit = META_OK so it matches the final committed state
+    tmp.commit = META_OK;
     tmp.crc16  = block_crc(&tmp);
 
     uint16_t dst = (cur_addr == FRAM_BLK_A_ADDR) ? FRAM_BLK_B_ADDR : FRAM_BLK_A_ADDR;
-
-    if (!write_blk(dst, &tmp)) return false;
-
-    // Write commit byte LAST (single-byte write → "atomic" for our purposes)
-    uint8_t ok = META_OK;
-    if (writeFRAM(dst + offsetof(fram_meta_block_t, commit), &ok, 1) != HAL_OK) return false;
-
-    // Verify by re-reading
-    fram_meta_block_t check;
-    if (!read_blk(dst, &check)) return false;
-    if (!valid_blk(&check))     return false;
-
-    g_work = check;
-    return true;
+    return commit_copy(dst, &tmp);
 }
 
 bool FRAMMETA_SetImageInfo(uint8_t img_id,
@@ -144,14 +222,13 @@ bool FRAMMETA_SetImageInfo(uint8_t img_id,
     uint32_t cur_addr = 0;
     fram_meta_block_t blk;
 
-    // Load current metadata, or initialize defaults if none exist yet
+    // Require valid metadata to already exist. The bootloader provisions the
+    // metadata block (including real golden-slot address/size/CRC) via
+    // FRAMMETA_BL_InitDefaults before the app ever runs, so a missing block here
+    // is a genuine FRAM fault — report it (surfaces as FRAM_META_FAIL at the
+    // FWUP_FLASH caller) rather than fabricating an unverifiable golden default.
     if (!FRAMMETA_Load(&blk, &cur_addr)) {
-        if (!FRAMMETA_InitDefaults(1)) {
-            return false;
-        }
-        if (!FRAMMETA_Load(&blk, &cur_addr)) {
-            return false;
-        }
+        return false;
     }
 
     // img_id is used as slot index in the current metadata model
@@ -159,27 +236,64 @@ bool FRAMMETA_SetImageInfo(uint8_t img_id,
         return false;
     }
 
-    // Mark slot as having a newly written image
-    // Suggested mapping with current 7-byte scheme:
-    // boot_feedback = 1
-    // boot_counter  = 3
-    // new_metadata  = 1
-    // error_code    = 0
+    // Mark the slot as a newly installed image.
+    // It remains pending until the application successfully calls ConfirmBoot().
     FRAMMETA_SetSlot(img_id,
                      flash_addr,
                      image_size,
                      image_crc,
                      bank_id,
-                     1,   // boot_feedback: new image pending
-                     3,   // boot_counter
-                     1,   // new_metadata/pending
-                     0);  // error_code
+                     0,   // BOOT_NEW_IMAGE
+                     3,   // boot attempts remaining
+                     1,   // META_PENDING
+                     0);  // NO_BOOT_ERROR
 
     // Activate new image
     FRAMMETA_SetActiveIndex(img_id);
 
-    return FRAMMETA_CommitNext(NULL, cur_addr);  // NULL causes CommitNext to use g_work
+    return FRAMMETA_CommitNext(NULL, cur_addr);
 
+}
+
+bool FRAMMETA_ActivateImage(uint8_t img_id)
+{
+    uint32_t cur_addr = 0;
+
+    if (!FRAMMETA_Load(NULL, &cur_addr)) {
+        return false;
+    }
+
+    if (img_id < 1u || img_id > NUM_SLOTS) {
+        return false;
+    }
+
+    uint8_t* rec = g_work.rec[img_id - 1u];
+    uint16_t stored_crc = ((uint16_t)rec[SLOT_OFF_CRC16_HI] << 8)
+                        | rec[SLOT_OFF_CRC16_LO];
+
+    if (stored_crc != Calc_CRC16(&rec[2], SLOT_RECORD_DATA_LEN)) {
+        return false;
+    }
+
+    bool already_selected =
+        g_work.active_idx == img_id &&
+        rec[SLOT_OFF_BOOT_FB] == 0u &&
+        rec[SLOT_OFF_NEW_META] == 1u &&
+        rec[SLOT_OFF_BOOT_COUNTER] == 3u &&
+        rec[SLOT_OFF_ERROR_CODE] == 0u;
+
+    if (already_selected) {
+        return true;
+    }
+
+    g_work.active_idx = img_id;
+    rec[SLOT_OFF_BOOT_FB] = 0u;       // BOOT_NEW_IMAGE
+    rec[SLOT_OFF_NEW_META] = 1u;      // META_PENDING
+    rec[SLOT_OFF_BOOT_COUNTER] = 3u;
+    rec[SLOT_OFF_ERROR_CODE] = 0u;
+    FRAMMETA_RecalcSlotCRC(img_id);
+
+    return FRAMMETA_CommitNext(NULL, cur_addr);
 }
 
 void FRAMMETA_SetActiveIndex(uint8_t idx)
@@ -245,25 +359,22 @@ void FRAMMETA_RecalcSlotCRC(uint8_t slot_idx)
     raw[1] = (uint8_t)(rc & 0xFF);
 }
 
-void ConfirmBoot(void)
+bool ConfirmBoot(void)
 {
     uint32_t cur_addr = 0;
 
     // Load the current metadata — this also populates g_work
-    if (!FRAMMETA_Load(NULL, &cur_addr)) return;
+    if (!FRAMMETA_Load(NULL, &cur_addr)) return false;
 
     uint8_t idx = g_work.active_idx;
-    if (idx < 1 || idx > NUM_SLOTS) return;
+    if (idx < 1 || idx > NUM_SLOTS) return false;
 
     uint8_t* rec = g_work.rec[idx - 1];
     rec[SLOT_OFF_BOOT_FB]      = 1;   // BOOTED_OK
+    rec[SLOT_OFF_NEW_META]     = 0;   // META_CONFIRMED
     rec[SLOT_OFF_BOOT_COUNTER] = 3;   // reset counter for next OTA cycle
     rec[SLOT_OFF_ERROR_CODE]   = 0;   // NO_BOOT_ERROR
+    FRAMMETA_RecalcSlotCRC(idx);
 
-    uint16_t rc = Calc_CRC16(&rec[2], SLOT_RECORD_DATA_LEN);
-    rec[SLOT_OFF_CRC16_HI] = (uint8_t)((rc >> 8) & 0xFF);
-    rec[SLOT_OFF_CRC16_LO] = (uint8_t)(rc & 0xFF);
-
-    FRAMMETA_CommitNext(NULL, cur_addr);
+    return FRAMMETA_CommitNext(NULL, cur_addr);
 }
-

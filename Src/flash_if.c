@@ -7,7 +7,7 @@
 
 #include  "flash_if.h"
 #include "memory_map.h"
-extern IWDG_HandleTypeDef hiwdg;
+#include "General_Functions.h"
 
 // -------------------- Sector map: STM32F767, Dual-Bank, 2MB --------------------
 // Bank1: 0x0800_0000 .. 0x080F_FFFF (S0..S11)
@@ -88,6 +88,31 @@ static void span_align_to_sectors(uint32_t base, uint32_t size, int* first, int*
     *last_inclusive = s;
 }
 
+static bool range_uses_only_ota_sectors(uint32_t base, uint32_t size,
+                                        int* first_out, int* last_out)
+{
+    if (!flash_range_is_within_flash(base, size)) {
+        return false;
+    }
+
+    int first = -1;
+    int last = -1;
+    span_align_to_sectors(base, size, &first, &last);
+    if (first < 0 || last < first) {
+        return false;
+    }
+
+    for (int s = first; s <= last; s++) {
+        if (!((s >= 5 && s <= 11) || (s >= 17 && s <= 23))) {
+            return false;
+        }
+    }
+
+    if (first_out != NULL) *first_out = first;
+    if (last_out != NULL) *last_out = last;
+    return true;
+}
+
 bool FLASHIF_IsBlank(uint32_t base, uint32_t size)
 {
     for (uint32_t i = 0; i < size; i++) {
@@ -104,9 +129,11 @@ HAL_StatusTypeDef FLASHIF_EraseRange(uint32_t base, uint32_t size)
 {
     if (size == 0) return HAL_OK;
 
-    int first=-1, last=-1;
-    span_align_to_sectors(base, size, &first, &last);
-    if (first < 0 || last < first) return HAL_ERROR;
+    int first = -1;
+    int last = -1;
+    if (!range_uses_only_ota_sectors(base, size, &first, &last)) {
+        return HAL_ERROR;
+    }
 
     HAL_StatusTypeDef st = HAL_FLASH_Unlock();
     if (st != HAL_OK) return st;
@@ -120,7 +147,7 @@ HAL_StatusTypeDef FLASHIF_EraseRange(uint32_t base, uint32_t size)
         ei.NbSectors    = 1;
         st = HAL_FLASHEx_Erase(&ei, &sector_err);
         if (st != HAL_OK) break;
-        HAL_IWDG_Refresh(&hiwdg);
+        (void)BootHealth_RefreshIWDG();
     }
 
     HAL_FLASH_Lock();
@@ -129,6 +156,11 @@ HAL_StatusTypeDef FLASHIF_EraseRange(uint32_t base, uint32_t size)
 
 FLASHIF_StatusTypedef FLASHIF_ProgramBuffer(uint32_t *dst, const uint8_t *src, uint32_t byte_count)
 {
+    if (dst == NULL || src == NULL ||
+        !range_uses_only_ota_sectors((uint32_t)dst, byte_count, NULL, NULL)) {
+        return FLASHIF_ERROR;
+    }
+
     HAL_StatusTypeDef st = HAL_FLASH_Unlock();
     if (st != HAL_OK) return st;
 
@@ -157,7 +189,7 @@ FLASHIF_StatusTypedef FLASHIF_ProgramBuffer(uint32_t *dst, const uint8_t *src, u
         acc += n;
 
         if (acc >= 1024u) {
-            HAL_IWDG_Refresh(&hiwdg);
+            (void)BootHealth_RefreshIWDG();
             acc = 0;
         }
     }
@@ -165,4 +197,3 @@ FLASHIF_StatusTypedef FLASHIF_ProgramBuffer(uint32_t *dst, const uint8_t *src, u
     HAL_FLASH_Lock();
     return st;
 }
-

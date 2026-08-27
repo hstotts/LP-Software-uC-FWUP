@@ -41,7 +41,9 @@ _Min_Stack_Size = 0x400; /* required amount of stack */
 MEMORY
 {
   DTCMRAM (xrw) : ORIGIN = 0x20000000, LENGTH = 128K
-  RAM     (xrw) : ORIGIN = 0x20020000, LENGTH = 324K
+  RAM     (xrw) : ORIGIN = 0x20020000, LENGTH = 232K
+  SCIENCE (xrw) : ORIGIN = 0x2005A000, LENGTH = 8K
+  FW_STAGE (xrw) : ORIGIN = 0x2005C000, LENGTH = 128K
   FLASH   (rx)  : ORIGIN = 0x08010000, LENGTH = 64K
 }
 
@@ -82,27 +84,27 @@ SECTIONS
     . = ALIGN(4);
   } >FLASH
 
-  .ARM.extab   : { *(.ARM.extab* .gnu.linkonce.armextab.*) } >FLASH
-  .ARM : {
+  .ARM.extab (READONLY) : { *(.ARM.extab* .gnu.linkonce.armextab.*) } >FLASH
+  .ARM (READONLY) : {
     __exidx_start = .;
     *(.ARM.exidx*)
     __exidx_end = .;
   } >FLASH
 
-  .preinit_array     :
+  .preinit_array (READONLY) :
   {
     PROVIDE_HIDDEN (__preinit_array_start = .);
     KEEP (*(.preinit_array*))
     PROVIDE_HIDDEN (__preinit_array_end = .);
   } >FLASH
-  .init_array :
+  .init_array (READONLY) :
   {
     PROVIDE_HIDDEN (__init_array_start = .);
     KEEP (*(SORT(.init_array.*)))
     KEEP (*(.init_array*))
     PROVIDE_HIDDEN (__init_array_end = .);
   } >FLASH
-  .fini_array :
+  .fini_array (READONLY) :
   {
     PROVIDE_HIDDEN (__fini_array_start = .);
     KEEP (*(SORT(.fini_array.*)))
@@ -142,6 +144,31 @@ SECTIONS
     __bss_end__ = _ebss;
   } >RAM
 
+  /* Deliberately empty: this address range is reserved for science data. */
+  .science_reserved (NOLOAD) :
+  {
+    __science_reserved_start__ = ORIGIN(SCIENCE);
+    __science_reserved_end__ = ORIGIN(SCIENCE) + LENGTH(SCIENCE);
+  } >SCIENCE
+
+  /* Link-check the upload buffer against its dedicated 128 KiB region. */
+  .fw_staging (NOLOAD) :
+  {
+    . = ALIGN(32);
+    __fw_staging_start__ = .;
+    KEEP(*(.fw_staging))
+    . = ALIGN(32);
+    __fw_staging_end__ = .;
+  } >FW_STAGE
+
+  /* Small system-reset-retained diagnostics in otherwise unused DTCM. */
+  .noinit.app_diag 0x20000100 (NOLOAD) :
+  {
+    . = ALIGN(8);
+    KEEP(*(.noinit.app_diag))
+    . = ALIGN(8);
+  } >DTCMRAM
+
   /* User_heap_stack section, used to check that there is enough RAM left */
   ._user_heap_stack :
   {
@@ -165,5 +192,3 @@ SECTIONS
 
   .ARM.attributes 0 : { *(.ARM.attributes) }
 }
-
-

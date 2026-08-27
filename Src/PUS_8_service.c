@@ -30,21 +30,190 @@
 #define SC_CB_PACKET_RAW_DATA_LEN       6 // 2 sequence counter bytes and 2 data bytes each probe.
 #define SC_CB_PACKET_FULL_DATA_LEN      1 + SC_CB_PACKET_RAW_DATA_LEN  // 1 byte header
 
-#define NEW_APP_ADDRESS 0x08010000
+/* GET_BOOT_METADATA report format (all multibyte fields are little-endian). */
+#define MD_REPORT_FORMAT_VERSION  1u
+#define MD_REPORT_SUMMARY         0u
+#define MD_REPORT_SLOT_DETAIL     1u
+
+#define MD_OVERALL_OK             0u
+#define MD_OVERALL_DEGRADED       1u
+#define MD_OVERALL_UNAVAILABLE    2u
+
+#define MD_FLAG_INSTALLED         (1u << 0)
+#define MD_FLAG_ACTIVE            (1u << 1)
+#define MD_FLAG_RECORD_CRC_OK     (1u << 2)
+#define MD_FLAG_PENDING           (1u << 3)
+#define MD_FLAG_BOOTED_OK         (1u << 4)
+#define MD_FLAG_GOLDEN            (1u << 5)
+#define MD_FLAG_OTA               (1u << 6)
+#define MD_FLAG_PROTECTED         (1u << 7)
+
+#define MD_BOOTED_OK              1u
+#define MD_META_CONFIRMED         0u
+#define MD_META_PENDING           1u
 
 // ---------------------- FWUP State Machine --------------------------------
-//#define FWUP_STAGE_BASE   0x20010000u   // SRAM staging base... TBD
-//#define FWUP_STAGE_SIZE   (256u * 1024u)
 
-static uint8_t  fwup_active = 0;
+uint8_t g_fw_staging[SRAM_FW_STAGING_SIZE]
+	__attribute__((section(".fw_staging"), aligned(32), used));
+
+_Static_assert(sizeof(g_fw_staging) == 0x00020000u,
+			   "FWUP staging buffer must be 128 KiB");
+
+extern uint32_t g_pfnVectors[];
+
+static int fwup_get_executing_bank(uint8_t* bank_id)
+{
+	if (bank_id == NULL)
+		return 0;
+
+	uintptr_t linked_image_base = (uintptr_t)&g_pfnVectors[0];
+
+	if (linked_image_base >= FLASH_BANK1_BASE &&
+		linked_image_base <= FLASH_BANK1_END) {
+		*bank_id = 0u;
+		return 1;
+	}
+
+	if (linked_image_base >= FLASH_BANK2_BASE &&
+		linked_image_base <= FLASH_BANK2_END) {
+		*bank_id = 1u;
+		return 1;
+	}
+
+	return 0;
+}
+
+static uint8_t fwup_get_executing_slot(void)
+{
+	uintptr_t linked_image_base = (uintptr_t)&g_pfnVectors[0];
+
+	for (uint8_t slot_id = 1u; slot_id <= NUM_SLOTS; slot_id++) {
+		fw_slot_desc_t slot;
+		if (fw_slot_get(slot_id, &slot) && slot.base == linked_image_base) {
+			return slot_id;
+		}
+	}
+
+	return 0u;
+}
+
+typedef enum {
+	FWUP_STATE_IDLE = 0,
+	FWUP_STATE_STAGING,
+} fwup_state_t;
+
+/* Erase/program/readback/metadata failures deliberately remain STAGING so
+ * ground may retry FWUP_FLASH. Only a successful metadata commit returns IDLE. */
+static fwup_state_t fwup_state = FWUP_STATE_IDLE;
 static uint8_t  fwup_img_id = 0;
 static uint32_t fwup_expected_size = 0;
 static uint32_t fwup_expected_crc32 = 0;
 static uint32_t fwup_bytes_written = 0;
+
+/* Placement frozen from the trusted slot descriptor at FWUP_BEGIN. */
+static uint32_t fwup_target_addr = 0;
+static uint8_t  fwup_target_bank = 0;
 // ----------------------------------------------------------------------------
+
+static uint32_t read_u32_le(const uint8_t* raw, uint8_t offset)
+{
+	return  (uint32_t)raw[offset]
+		 | ((uint32_t)raw[offset + 1u] << 8)
+		 | ((uint32_t)raw[offset + 2u] << 16)
+		 | ((uint32_t)raw[offset + 3u] << 24);
+}
+
+static bool fwup_staged_vectors_valid(void)
+{
+	uint32_t app_sp = read_u32_le(g_fw_staging, 0u);
+	uint32_t app_pc = read_u32_le(g_fw_staging, 4u);
+	uint32_t reset_addr = app_pc & ~1u;
+	uint32_t image_end = fwup_target_addr + fwup_expected_size;
+
+	if (image_end < fwup_target_addr) {
+		return false;
+	}
+	if (app_sp <= 0x20000000u || app_sp > 0x20080000u ||
+		(app_sp & 0x7u) != 0u) {
+		return false;
+	}
+	return (app_pc & 1u) != 0u &&
+		   reset_addr >= fwup_target_addr && reset_addr < image_end;
+}
+
+static bool fwup_boot_candidate_valid(uint8_t img_id,
+									  uint32_t requested_addr,
+									  const uint8_t rec[20])
+{
+	fw_slot_desc_t slot;
+
+	if (rec == NULL || !fw_slot_get(img_id, &slot)) {
+		return false;
+	}
+
+	if (slot.role != FW_SLOT_ROLE_GOLDEN &&
+		slot.role != FW_SLOT_ROLE_OTA) {
+		return false;
+	}
+
+	if (requested_addr != slot.base) {
+		return false;
+	}
+
+	uint16_t stored_record_crc =
+		((uint16_t)rec[SLOT_OFF_CRC16_HI] << 8)
+		| rec[SLOT_OFF_CRC16_LO];
+	uint16_t calculated_record_crc =
+		Calc_CRC16((uint8_t*)&rec[2], SLOT_RECORD_DATA_LEN);
+
+	if (stored_record_crc != calculated_record_crc) {
+		return false;
+	}
+
+	uint32_t flash_addr = read_u32_le(rec, SLOT_OFF_FLASH_ADDR);
+	uint32_t image_size = read_u32_le(rec, SLOT_OFF_IMAGE_SIZE);
+	uint32_t stored_image_crc = read_u32_le(rec, SLOT_OFF_IMAGE_CRC32);
+
+	if (rec[SLOT_OFF_IMAGE_INDEX] != img_id ||
+		rec[SLOT_OFF_BANK_ID] != slot.bank_id ||
+		flash_addr != slot.base ||
+		image_size < 8u || image_size > slot.capacity) {
+		return false;
+	}
+
+	uint32_t image_end = flash_addr + image_size;
+	if (image_end < flash_addr ||
+		image_end > (slot.base + slot.capacity)) {
+		return false;
+	}
+
+	if (crc32_calc((const uint8_t*)flash_addr, image_size) !=
+		stored_image_crc) {
+		return false;
+	}
+
+	uint32_t app_sp = *(volatile const uint32_t*)flash_addr;
+	uint32_t app_pc = *(volatile const uint32_t*)(flash_addr + 4u);
+	uint32_t reset_addr = app_pc & ~1u;
+
+	if (app_sp <= 0x20000000u || app_sp > 0x20080000u ||
+		(app_sp & 0x7u) != 0u) {
+		return false;
+	}
+
+	if ((app_pc & 1u) == 0u ||
+		reset_addr < flash_addr || reset_addr >= image_end) {
+		return false;
+	}
+
+	return true;
+}
 
 extern QueueHandle_t UART_OBC_Out_Queue;
 extern UART_HandleTypeDef huart5;
+
+extern volatile uint8_t g_boot_confirmed;  // set by ConfirmBoot() at startup (main.c)
 
 extern osThreadId PUS_3_TaskHandle;
 extern osThreadId Watchdog_TaskHandle;
@@ -61,6 +230,261 @@ uint8_t UART_FPGA_Rx_Buffer[100];
 uint8_t UART_FPGA_OBC_Tx_Buffer[100];
 
 volatile uint8_t uart_tx_FPGA_done = 1;
+
+static const fram_meta_block_t* metadata_selected_block(
+	const fram_meta_snapshot_t* snapshot)
+{
+	if (snapshot->selected_copy == FRAMMETA_SELECTED_A) {
+		return &snapshot->copy_a;
+	}
+	if (snapshot->selected_copy == FRAMMETA_SELECTED_B) {
+		return &snapshot->copy_b;
+	}
+	return NULL;
+}
+
+static bool metadata_record_crc_valid(const uint8_t rec[20])
+{
+	if (rec == NULL) {
+		return false;
+	}
+
+	uint16_t stored_crc = ((uint16_t)rec[SLOT_OFF_CRC16_HI] << 8)
+						  | rec[SLOT_OFF_CRC16_LO];
+	uint16_t calculated_crc =
+		Calc_CRC16((uint8_t*)&rec[2], SLOT_RECORD_DATA_LEN);
+	return stored_crc == calculated_crc;
+}
+
+static bool metadata_record_installed(uint8_t slot_id,
+									  const uint8_t rec[20])
+{
+	fw_slot_desc_t slot;
+	if (!metadata_record_crc_valid(rec) ||
+		!fw_slot_get(slot_id, &slot) ||
+		(slot.role != FW_SLOT_ROLE_GOLDEN && slot.role != FW_SLOT_ROLE_OTA)) {
+		return false;
+	}
+
+	uint32_t flash_addr = read_u32_le(rec, SLOT_OFF_FLASH_ADDR);
+	uint32_t image_size = read_u32_le(rec, SLOT_OFF_IMAGE_SIZE);
+
+	return rec[SLOT_OFF_IMAGE_INDEX] == slot_id &&
+		   rec[SLOT_OFF_BANK_ID] == slot.bank_id &&
+		   flash_addr == slot.base &&
+		   image_size >= 8u && image_size <= slot.capacity;
+}
+
+static uint8_t metadata_slot_flags(uint8_t slot_id,
+								   const uint8_t rec[20],
+								   uint8_t active_idx)
+{
+	uint8_t flags = 0u;
+	fw_slot_desc_t slot;
+
+	if (fw_slot_get(slot_id, &slot)) {
+		if (slot.role == FW_SLOT_ROLE_GOLDEN) {
+			flags |= MD_FLAG_GOLDEN;
+		}
+		if (slot.role == FW_SLOT_ROLE_OTA) {
+			flags |= MD_FLAG_OTA;
+		} else {
+			flags |= MD_FLAG_PROTECTED;
+		}
+	}
+
+	if (slot_id == active_idx) {
+		flags |= MD_FLAG_ACTIVE;
+	}
+
+	if (metadata_record_crc_valid(rec)) {
+		flags |= MD_FLAG_RECORD_CRC_OK;
+
+		if (metadata_record_installed(slot_id, rec)) {
+			flags |= MD_FLAG_INSTALLED;
+		}
+		if (rec[SLOT_OFF_NEW_META] == MD_META_PENDING) {
+			flags |= MD_FLAG_PENDING;
+		}
+		if (rec[SLOT_OFF_NEW_META] == MD_META_CONFIRMED &&
+			rec[SLOT_OFF_BOOT_FB] == MD_BOOTED_OK) {
+			flags |= MD_FLAG_BOOTED_OK;
+		}
+	}
+
+	return flags;
+}
+
+static void report_put_u8(uint8_t* data, uint16_t* offset, uint8_t value)
+{
+	data[(*offset)++] = value;
+}
+
+static void report_put_u16_le(uint8_t* data, uint16_t* offset, uint16_t value)
+{
+	data[(*offset)++] = (uint8_t)(value & 0xFFu);
+	data[(*offset)++] = (uint8_t)((value >> 8) & 0xFFu);
+}
+
+static void report_put_u32_le(uint8_t* data, uint16_t* offset, uint32_t value)
+{
+	data[(*offset)++] = (uint8_t)(value & 0xFFu);
+	data[(*offset)++] = (uint8_t)((value >> 8) & 0xFFu);
+	data[(*offset)++] = (uint8_t)((value >> 16) & 0xFFu);
+	data[(*offset)++] = (uint8_t)((value >> 24) & 0xFFu);
+}
+
+static void init_function_report(UART_OUT_OBC_msg* msg,
+								 const PUS_TC_header_t* PUS_TC_h)
+{
+	*msg = (UART_OUT_OBC_msg){0};
+	msg->PUS_HEADER_PRESENT = 1u;
+	msg->PUS_SOURCE_ID = PUS_TC_h->source_id;
+	msg->SERVICE_ID = FUNCTION_MANAGEMNET_ID;
+	msg->SUBTYPE_ID = FM_FUNCTION_REPORT;
+}
+
+static void send_version_report(const PUS_TC_header_t* PUS_TC_h)
+{
+	UART_OUT_OBC_msg msg;
+	init_function_report(&msg, PUS_TC_h);
+
+	msg.TM_data[0] = GET_VERSION;
+	msg.TM_data[1] = FW_VERSION_MAJOR;
+	msg.TM_data[2] = FW_VERSION_MINOR;
+	msg.TM_data[3] = FW_VERSION_PATCH;
+	msg.TM_data[4] = g_boot_confirmed;
+	msg.TM_data_len = 5u;
+
+	xQueueSend(UART_OBC_Out_Queue, &msg, portMAX_DELAY);
+}
+
+static void send_metadata_summary(const SPP_header_t* SPP_h,
+								  const PUS_TC_header_t* PUS_TC_h,
+								  const fram_meta_snapshot_t* snapshot)
+{
+	UART_OUT_OBC_msg msg;
+	init_function_report(&msg, PUS_TC_h);
+
+	const fram_meta_block_t* selected = metadata_selected_block(snapshot);
+	uint8_t active_idx = selected != NULL ? selected->active_idx : 0u;
+	bool valid_a = snapshot->copy_a_status == FRAMMETA_COPY_VALID;
+	bool valid_b = snapshot->copy_b_status == FRAMMETA_COPY_VALID;
+	uint8_t overall_status = (valid_a && valid_b)
+							 ? MD_OVERALL_OK
+							 : ((valid_a || valid_b)
+								? MD_OVERALL_DEGRADED
+								: MD_OVERALL_UNAVAILABLE);
+
+	uint16_t offset = 0u;
+	report_put_u8(msg.TM_data, &offset, GET_BOOT_METADATA);
+	report_put_u8(msg.TM_data, &offset, MD_REPORT_FORMAT_VERSION);
+	report_put_u8(msg.TM_data, &offset, MD_REPORT_SUMMARY);
+	report_put_u16_le(msg.TM_data, &offset, SPP_h->packet_sequence_count);
+	report_put_u8(msg.TM_data, &offset, overall_status);
+	report_put_u8(msg.TM_data, &offset, (uint8_t)snapshot->copy_a_status);
+	report_put_u8(msg.TM_data, &offset, (uint8_t)snapshot->copy_b_status);
+	report_put_u8(msg.TM_data, &offset, (uint8_t)snapshot->selected_copy);
+	report_put_u16_le(msg.TM_data, &offset, snapshot->copy_a.seq);
+	report_put_u16_le(msg.TM_data, &offset, snapshot->copy_b.seq);
+	report_put_u16_le(msg.TM_data, &offset,
+					 selected != NULL ? selected->version : 0u);
+	report_put_u8(msg.TM_data, &offset, active_idx);
+	report_put_u8(msg.TM_data, &offset, fwup_get_executing_slot());
+	report_put_u8(msg.TM_data, &offset, g_boot_confirmed);
+	report_put_u8(msg.TM_data, &offset, NUM_SLOTS);
+
+	for (uint8_t slot_id = 1u; slot_id <= NUM_SLOTS; slot_id++) {
+		const uint8_t* rec = selected != NULL
+						 ? selected->rec[slot_id - 1u]
+						 : NULL;
+		report_put_u8(msg.TM_data, &offset, slot_id);
+		report_put_u8(msg.TM_data, &offset,
+					  metadata_slot_flags(slot_id, rec, active_idx));
+		report_put_u8(msg.TM_data, &offset,
+					  rec != NULL ? rec[SLOT_OFF_BOOT_COUNTER] : 0u);
+		report_put_u8(msg.TM_data, &offset,
+					  rec != NULL ? rec[SLOT_OFF_ERROR_CODE] : 0u);
+	}
+
+	msg.TM_data_len = offset;
+	xQueueSend(UART_OBC_Out_Queue, &msg, portMAX_DELAY);
+}
+
+static void send_metadata_slot_detail(const PUS_TC_header_t* PUS_TC_h,
+									  const fram_meta_snapshot_t* snapshot,
+									  uint8_t slot_id)
+{
+	UART_OUT_OBC_msg msg;
+	init_function_report(&msg, PUS_TC_h);
+
+	const fram_meta_block_t* selected = metadata_selected_block(snapshot);
+	const uint8_t* rec = selected->rec[slot_id - 1u];
+	fw_slot_desc_t slot = {0};
+	(void)fw_slot_get(slot_id, &slot);
+
+	uint16_t stored_record_crc =
+		((uint16_t)rec[SLOT_OFF_CRC16_HI] << 8)
+		| rec[SLOT_OFF_CRC16_LO];
+	bool record_crc_valid = metadata_record_crc_valid(rec);
+
+	uint16_t offset = 0u;
+	report_put_u8(msg.TM_data, &offset, GET_BOOT_METADATA);
+	report_put_u8(msg.TM_data, &offset, MD_REPORT_FORMAT_VERSION);
+	report_put_u8(msg.TM_data, &offset, MD_REPORT_SLOT_DETAIL);
+	report_put_u8(msg.TM_data, &offset, slot_id);
+	report_put_u8(msg.TM_data, &offset, (uint8_t)slot.role);
+	report_put_u8(msg.TM_data, &offset,
+				  metadata_slot_flags(slot_id, rec, selected->active_idx));
+	report_put_u8(msg.TM_data, &offset, rec[SLOT_OFF_BANK_ID]);
+	report_put_u32_le(msg.TM_data, &offset,
+				   read_u32_le(rec, SLOT_OFF_FLASH_ADDR));
+	report_put_u32_le(msg.TM_data, &offset,
+				   read_u32_le(rec, SLOT_OFF_IMAGE_SIZE));
+	report_put_u32_le(msg.TM_data, &offset,
+				   read_u32_le(rec, SLOT_OFF_IMAGE_CRC32));
+	report_put_u8(msg.TM_data, &offset, rec[SLOT_OFF_BOOT_COUNTER]);
+	report_put_u8(msg.TM_data, &offset, rec[SLOT_OFF_BOOT_FB]);
+	report_put_u8(msg.TM_data, &offset, rec[SLOT_OFF_NEW_META]);
+	report_put_u8(msg.TM_data, &offset, rec[SLOT_OFF_ERROR_CODE]);
+	report_put_u16_le(msg.TM_data, &offset, stored_record_crc);
+	report_put_u8(msg.TM_data, &offset, record_crc_valid ? 1u : 0u);
+	report_put_u8(msg.TM_data, &offset,
+				  selected->active_idx == slot_id ? 1u : 0u);
+
+	msg.TM_data_len = offset;
+	xQueueSend(UART_OBC_Out_Queue, &msg, portMAX_DELAY);
+}
+
+static TM_Err_Codes send_boot_metadata_report(
+	const SPP_header_t* SPP_h,
+	const PUS_TC_header_t* PUS_TC_h,
+	const PUS_8_msg_unpacked* request)
+{
+	if (request->N_args > 1u) {
+		return INVALID_PLENGTH;
+	}
+
+	if (request->N_args == 1u &&
+		(request->img_id < 1u || request->img_id > NUM_SLOTS)) {
+		return UNDEFINED_ID;
+	}
+
+	fram_meta_snapshot_t snapshot;
+	bool has_selected_copy = FRAMMETA_ReadSnapshot(&snapshot);
+
+	if (request->N_args == 0u) {
+		send_metadata_summary(SPP_h, PUS_TC_h, &snapshot);
+		return NO_ERROR;
+	}
+
+	if (!has_selected_copy) {
+		return FRAM_META_FAIL;
+	}
+
+	send_metadata_slot_detail(PUS_TC_h, &snapshot, request->img_id);
+	return NO_ERROR;
+}
  
 bool PUS_8_check_FPGA_msg_format(uint8_t* msg, uint8_t msg_len) {
     bool result = false;
@@ -168,18 +592,18 @@ TM_Err_Codes PUS_8_unpack_msg(PUS_8_msg *pus8_msg_received, PUS_8_msg_unpacked* 
 				data_interator += 4;
 				break;
 
+			case SRAM_DEST_ADDR_ARG_ID:
+				if ((data_end - data_interator) < 4) return INVALID_PLENGTH;
+				memcpy(&pus8_msg_unpacked->sram_dest_addr, data_interator, 4);
+				data_interator += 4;
+				break;
+
 			case BANK_ID_ARG_ID:
 				if ((data_end - data_interator) < 1) return INVALID_PLENGTH;
 				pus8_msg_unpacked->bank_id = *data_interator++;
 				break;
 
-			case SEC_ID_ARG_ID:
-				if ((data_end - data_interator) < 2) return INVALID_PLENGTH;
-				memcpy(&pus8_msg_unpacked->sec_id, data_interator, 2);
-				data_interator += 2;
-				break;
-
-			case IMG_DATA_ARG_ID:
+				case IMG_DATA_ARG_ID:
 			{
 				// consume the rest of the packet as image bytes
 				uint16_t remain = (uint16_t)(data_end - data_interator);
@@ -676,76 +1100,98 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 
 		case REBOOT_DEVICE:
 		{
-			vTaskSuspend(Watchdog_TaskHandle);
-			break;
+			// An intentional reboot must not look like a watchdog crash: the
+			// bootloader falls back to golden on an IWDG reset after BOOTED_OK.
+			// NVIC_SystemReset() sets SFTRSTF (not IWDGRSTF), so the confirmed
+			// image survives the reboot. This case sends its own completion ACK
+			// and never returns to the PUS-8 wrapper; if it is ever refactored to
+			// return, drop the manual ACK and let the wrapper send exactly one.
+			PUS_1_send_succ_comp(SPP_h, PUS_TC_h);
+			osDelay(100);             // let the UART queue/DMA flush the ACK
+			NVIC_SystemReset();       // sets SFTRSTF, not IWDGRST — never returns
+			for (;;) { }              // defensive: do not fall through if reset is delayed
 		}
 
 		case JUMP_TO_IMAGE:
 		{
-			uint32_t target_addr = pus8_msg_unpacked->img_addr;
-			if (target_addr == 0) return DEV_CPDU_EXEC_FAIL;
+			fram_meta_block_t blk;
+			uint8_t img_id = pus8_msg_unpacked->img_id;
 
-			// Validate it looks like a real flash image (stack in SRAM, PC in flash)
-			uint32_t app_stack   = *(volatile uint32_t*)(target_addr);
-			uint32_t app_pc      = *(volatile uint32_t*)(target_addr + 4);
-			if (app_stack < 0x20000000u || app_stack > 0x20080000u) return DEV_CPDU_EXEC_FAIL;
-			if (app_pc    < 0x08000000u || app_pc    > 0x081FFFFFu) return DEV_CPDU_EXEC_FAIL;
-
-			void (*app_reset_handler)(void) = (void (*)(void))app_pc;
-
-			PUS_1_send_succ_comp(SPP_h, PUS_TC_h);
-			osDelay(50);   // give UART time to flush the ACK
-
-			// Tear down
-			HAL_DeInit();
-			SysTick->CTRL = 0;
-			SysTick->LOAD = 0;
-			SysTick->VAL  = 0;
-			__disable_irq();
-			for (int i = 0; i < 8; i++) {
-				NVIC->ICER[i] = 0xFFFFFFFFu;
-				NVIC->ICPR[i] = 0xFFFFFFFFu;
+			if (!FRAMMETA_Load(&blk, NULL)) {
+				return FRAM_META_FAIL;
 			}
 
-			// Relocate vector table and jump
-			SCB->VTOR = target_addr;
-			__DSB();
-			__ISB();
-			__set_MSP(app_stack);
-			app_reset_handler();
-			break;
+			if (img_id < 1u || img_id > NUM_SLOTS) {
+				return IMAGE_NOT_BOOTABLE;
+			}
+
+			const uint8_t* rec = blk.rec[img_id - 1u];
+			if (!fwup_boot_candidate_valid(img_id,
+											 pus8_msg_unpacked->img_addr,
+											 rec)) {
+				return IMAGE_NOT_BOOTABLE;
+			}
+
+			if (!FRAMMETA_ActivateImage(img_id)) {
+				return FRAM_META_FAIL;
+			}
+
+			PUS_1_send_succ_comp(SPP_h, PUS_TC_h);
+			osDelay(100);   // give UART time to flush the completion ACK
+			NVIC_SystemReset();
+
+			for (;;) {
+				/* Defensive: reset should never return. */
+			}
 		}
 //------------------------------ UPDATE CASES --------------------------------------------
 
 		case FWUP_BEGIN:
 		{
-			// Start a new update session
-			fwup_active = 1;
-			fwup_img_id = pus8_msg_unpacked->img_id;
+			fw_slot_desc_t target;
+
+			if (!fw_slot_get(pus8_msg_unpacked->img_id, &target) ||
+				target.role != FW_SLOT_ROLE_OTA) {
+				return FWUP_SLOT_NOT_WRITABLE;
+			}
+
+			if (pus8_msg_unpacked->img_size < 8u ||
+				pus8_msg_unpacked->img_size > target.capacity) {
+				return IMG_SIZE_DISCREP;
+			}
+
+			if (pus8_msg_unpacked->img_size > SRAM_FW_STAGING_SIZE) {
+				return SRAM_IMG_DISCREP;
+			}
+
+			uint8_t executing_bank;
+			if (!fwup_get_executing_bank(&executing_bank)) {
+				return BAD_STATE;
+			}
+
+			if (target.bank_id == executing_bank) {
+				return BAD_STATE;
+			}
+
+			// Start a new update session only after the request is accepted
+			fwup_state = FWUP_STATE_STAGING;
+			fwup_img_id = target.slot_id;
 			fwup_expected_size = pus8_msg_unpacked->img_size;
 			fwup_expected_crc32 = pus8_msg_unpacked->img_crc32;
 			fwup_bytes_written = 0;
-
-			// hard safety check: must fit staging SRAM window
-			if (fwup_expected_size == 0 || fwup_expected_size > SRAM_FW_STAGING_SIZE) {
-				fwup_active = 0;
-				return SRAM_IMG_DISCREP;  
-			}
-
-			//PUS_1_send_succ_comp(SPP_h, PUS_TC_h)//???????????????????????????????????????????????????????????????????
-			// Optional: clear staging region (not required, but can help debug?)
-			// memset((void*)FWUP_STAGE_BASE, 0xFF, fwup_expected_size);
+			fwup_target_addr = target.base;
+			fwup_target_bank = target.bank_id;
 
 			break;
 		}
 
 		case FWUP_SRAM_WRITE:
 		{
-			if (!fwup_active) {
+			if (fwup_state != FWUP_STATE_STAGING) {
 				return UPDATE_INACTIVE; 
 			}
 
-			uint32_t addr = pus8_msg_unpacked->img_addr;
+			uint32_t addr = pus8_msg_unpacked->sram_dest_addr;
 			uint16_t len  = pus8_msg_unpacked->img_data_len;
 
 			if (len == 0) {
@@ -753,18 +1199,23 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			}
 
 			// Must land inside staging region
-			if (addr < SRAM_FW_STAGING_BASE ||
-				(addr + len) > (SRAM_FW_STAGING_BASE + SRAM_FW_STAGING_SIZE)) {
-				return SRAM_BUFFER_FAIL;  // use better code??????
+			if (addr < SRAM_FW_STAGING_BASE) {
+				return SRAM_BUFFER_FAIL;
+			}
+
+			uint32_t rel_start = addr - SRAM_FW_STAGING_BASE;
+			if (rel_start > SRAM_FW_STAGING_SIZE ||
+				(uint32_t)len > SRAM_FW_STAGING_SIZE - rel_start) {
+				return SRAM_BUFFER_FAIL;
 			}
 
 			// Must not exceed the declared image size window
-			uint32_t rel_start = addr - SRAM_FW_STAGING_BASE;
-			if ((rel_start + len) > fwup_expected_size) {
+			if (rel_start > fwup_expected_size ||
+				(uint32_t)len > fwup_expected_size - rel_start) {
 				return SRAM_IMG_DISCREP;
 			}
 
-			memcpy((void*)addr, pus8_msg_unpacked->img_data, len);
+			memcpy(&g_fw_staging[rel_start], pus8_msg_unpacked->img_data, len);
 
 			// Track highest written offset (+len)
 			uint32_t rel_end = rel_start + len;
@@ -777,7 +1228,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 
 		case FWUP_FLASH:
 		{
-			if (!fwup_active) {
+			if (fwup_state != FWUP_STATE_STAGING) {
 				return UPDATE_INACTIVE;
 			}
 
@@ -786,12 +1237,27 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			}
 
 			// 1) Verify staged SRAM image CRC32
-			uint32_t calc = crc32_calc((uint8_t*)SRAM_FW_STAGING_BASE, fwup_expected_size);
+			uint32_t calc = crc32_calc(g_fw_staging, fwup_expected_size);
 			if (calc != fwup_expected_crc32) {
 				return CS_DISCREP;
 			}
 
-			uint32_t flash_addr = pus8_msg_unpacked->img_addr;
+			/* Placement/vector preflight happens before any destructive flash
+			 * operation and uses the real image extent, not sector capacity. */
+			if (!fwup_staged_vectors_valid()) {
+				return IMAGE_NOT_BOOTABLE;
+			}
+
+			/* Preserve the existing command fields for protocol compatibility,
+			 * but require them to match the placement accepted by FWUP_BEGIN. */
+			if (pus8_msg_unpacked->img_id != fwup_img_id ||
+				pus8_msg_unpacked->img_addr != fwup_target_addr ||
+				pus8_msg_unpacked->bank_id != fwup_target_bank) {
+				return FWUP_SLOT_NOT_WRITABLE;
+			}
+
+			/* Command fields are no longer authoritative. */
+			uint32_t flash_addr = fwup_target_addr;
 
 			// 2) Validate target range is within legal flash
 			if (!flash_range_is_within_flash(flash_addr, fwup_expected_size)) {
@@ -807,13 +1273,13 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			//    before FLASHIF_ProgramBuffer reads from it.
 			//    Size must be rounded up to the nearest 32-byte cache line.
 			uint32_t aligned_size = (fwup_expected_size + 31u) & ~31u;
-			SCB_CleanDCache_by_Addr((uint32_t*)SRAM_FW_STAGING_BASE, (int32_t)aligned_size);
+			SCB_CleanDCache_by_Addr((uint32_t*)g_fw_staging, (int32_t)aligned_size);
 
 			// 5) Program flash
 			if (FLASHIF_ProgramBuffer((uint32_t*)flash_addr,
-									(uint8_t*)SRAM_FW_STAGING_BASE,
+									g_fw_staging,
 									fwup_expected_size) != FLASHIF_OK) {
-				return IMG_SIZE_DISCREP;
+				return DEV_CPDU_EXEC_FAIL;
 			}
 
 			// 6) Invalidate/reset ALL cache layers before readback
@@ -830,31 +1296,36 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 				return FLASH_CS_DISCREP;
 			}
 
-			// 8) Update FRAM metadata
-			FRAMMETA_SetImageInfo(fwup_img_id,
+			// 8) Update FRAM metadata. Keep the session retryable on failure.
+			if (!FRAMMETA_SetImageInfo(fwup_img_id,
 								flash_addr,
 								fwup_expected_size,
 								fwup_expected_crc32,
-								pus8_msg_unpacked->bank_id);
+								fwup_target_bank)) {
+				return FRAM_META_FAIL;
+			}
+			fwup_state = FWUP_STATE_IDLE;
+			break;
+		}
 
-			fwup_active = 0;
+		case GET_BOOT_METADATA:
+		{
+			TM_Err_Codes report_result =
+				send_boot_metadata_report(SPP_h, PUS_TC_h, pus8_msg_unpacked);
+			if (report_result != NO_ERROR) {
+				return report_result;
+			}
 			break;
 		}
 
 		case GET_VERSION:
 		{
-			UART_OUT_OBC_msg msg = {0};
-			msg.PUS_HEADER_PRESENT = 0;
-
-			msg.TM_data[0] = GET_VERSION;       
-			msg.TM_data[1] = FW_VERSION_MAJOR;
-			msg.TM_data[2] = FW_VERSION_MINOR;
-			msg.TM_data[3] = FW_VERSION_PATCH;
-			msg.TM_data_len = 4;
-
-			xQueueSend(UART_OBC_Out_Queue, &msg, portMAX_DELAY);
+			if (pus8_msg_unpacked->N_args != 0u) {
+				return INVALID_PLENGTH;
+			}
+			send_version_report(PUS_TC_h);
 			break;
-}
+		}
 		//-----------------------------------------------------------------------------------------
 
 
@@ -872,6 +1343,10 @@ TM_Err_Codes PUS_8_handle_FM_TC(SPP_header_t* SPP_header , PUS_TC_header_t* PUS_
 	if(data_size < 2)
 	{
 		return INVALID_PLENGTH;
+	}
+	if (data_size > PUS_8_MAX_DATA_LEN)
+	{
+		return INVALID_PLENGTH;   // guard the memcpy into PUS_8_msg.data below
 	}
 	if (Current_Global_Device_State != NORMAL_MODE)
 	{

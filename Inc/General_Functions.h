@@ -67,12 +67,14 @@ typedef enum {
 
 	// --- Firmware update processes ---
 	UPDATE_INACTIVE 			= 0x0500, // Update mode inactive
-	IMG_SIZE_DISCREP			= 0x0501, // 
-	SRAM_IMG_DISCREP			= 0x0502, // SRAM/Image size and address incompatable   
-	SRAM_BUFFER_FAIL 			= 0x0503, //
+	IMG_SIZE_DISCREP			= 0x0501, // Declared image does not fit its selected flash slot
+	SRAM_IMG_DISCREP			= 0x0502, // Image does not fit staging or write exceeds declared image
+	SRAM_BUFFER_FAIL 			= 0x0503, // Write address falls outside the physical staging buffer
 	IMG_INCOMPLETE 				= 0x0504, // Image incomplete in SRAM
-	FLASH_MEM_FULL				= 0x0505, // Expected blank flash target region
-	FLASH_CS_DISCREP			= 0x0506  // Flash memory CRC mismatch
+	FWUP_SLOT_NOT_WRITABLE		= 0x0505, // Invalid, bootloader, golden, or reserved target slot
+	FLASH_CS_DISCREP			= 0x0506, // Flash memory CRC mismatch
+	FRAM_META_FAIL				= 0x0507, // FRAM metadata read or commit verification failed
+	IMAGE_NOT_BOOTABLE			= 0x0508  // Existing image metadata, CRC, or vectors are invalid
 
 
 
@@ -120,6 +122,8 @@ void Prepare_full_msg(SPP_header_t* resp_SPP_header,
 
 void FPGA_process_frame(const uint8_t *frame);
 void Handle_incoming_TC();
+void BootHealth_RequestReset(void);
+bool BootHealth_RefreshIWDG(void);
 
 uint32_t crc32_calc(const uint8_t* data, uint32_t length);
 
