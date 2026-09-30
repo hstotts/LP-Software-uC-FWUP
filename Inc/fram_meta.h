@@ -8,29 +8,35 @@
 #ifndef INC_FRAM_META_H_
 #define INC_FRAM_META_H_
 
-#pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
-// Reuse built FRAM.h CRC + read/write:
-#include <FRAM.h>
+#include "FRAM.h"
 
 #ifndef NUM_SLOTS
-#define NUM_SLOTS 24
+#define NUM_SLOTS 24u
 #endif
 
-/* ----- Public block type (exposed for reading/debug) ----- */
-
 typedef struct __attribute__((packed)) {
-    uint32_t magic;        // 'META' = 0x4D455441
-    uint16_t version;      // 1
-    uint16_t seq;          // generation counter (monotonic)
-    uint8_t  active_idx;   // selected image index (1..NUM_SLOTS)
-    uint8_t  commit;       // 0xFF = WIP, 0xA5 = committed (write LAST)
-    uint8_t  _rsv[2];      // reserved (set to 0xFF)
-    uint8_t  rec[NUM_SLOTS][20]; // packed 20-byte per-slot records
-    uint16_t crc16;        // CRC16-CCITT over [magic.._rsv] + rec[] (excl. this field)
+    uint32_t magic;              /* 'META' = 0x4D455441 */
+    uint16_t version;            /* metadata format version */
+    uint16_t seq;                /* wrapping generation counter */
+    uint8_t active_idx;          /* selected slot, 1..NUM_SLOTS */
+    uint8_t commit;              /* 0xFF = WIP, 0xA5 = committed */
+    uint8_t _rsv[2];             /* reserved, initialized to 0xFF */
+    uint8_t rec[NUM_SLOTS][20];  /* packed 20-byte slot records */
+    uint16_t crc16;              /* CRC16 over every preceding byte */
 } fram_meta_block_t;
+
+_Static_assert(sizeof(fram_meta_block_t) == 494u,
+               "FRAM metadata block layout changed");
+_Static_assert(offsetof(fram_meta_block_t, rec) == 12u,
+               "FRAM metadata record offset changed");
+_Static_assert(offsetof(fram_meta_block_t, crc16) == 492u,
+               "FRAM metadata CRC offset changed");
+_Static_assert(sizeof(((fram_meta_block_t*)0)->rec[0]) == 20u,
+               "FRAM slot record layout changed");
 
 /* Read-only health of each redundant FRAM metadata copy.  These numeric
  * values are also used by the GET_BOOT_METADATA wire report. */
@@ -47,46 +53,38 @@ typedef enum {
 } fram_meta_selected_copy_t;
 
 typedef struct {
-    fram_meta_block_t          copy_a;
-    fram_meta_block_t          copy_b;
-    fram_meta_copy_status_t    copy_a_status;
-    fram_meta_copy_status_t    copy_b_status;
-    fram_meta_selected_copy_t  selected_copy;
+    fram_meta_block_t copy_a;
+    fram_meta_block_t copy_b;
+    fram_meta_copy_status_t copy_a_status;
+    fram_meta_copy_status_t copy_b_status;
+    fram_meta_selected_copy_t selected_copy;
 } fram_meta_snapshot_t;
 
-
 /* Per-slot record byte offsets (within each rec[i][20] array) */
-#define SLOT_OFF_CRC16_HI     0   // CRC16 high byte (over bytes [2..19])
-#define SLOT_OFF_CRC16_LO     1   // CRC16 low byte
-#define SLOT_OFF_FLASH_ADDR   2   // u32 LE, bytes [2..5]
-#define SLOT_OFF_IMAGE_SIZE   6   // u32 LE, bytes [6..9]
-#define SLOT_OFF_IMAGE_CRC32  10  // u32 LE, bytes [10..13]
+#define SLOT_OFF_CRC16_HI     0   /* CRC16 high byte (over bytes 2..19) */
+#define SLOT_OFF_CRC16_LO     1   /* CRC16 low byte */
+#define SLOT_OFF_FLASH_ADDR   2   /* u32 LE, bytes 2..5 */
+#define SLOT_OFF_IMAGE_SIZE   6   /* u32 LE, bytes 6..9 */
+#define SLOT_OFF_IMAGE_CRC32  10  /* u32 LE, bytes 10..13 */
 #define SLOT_OFF_BANK_ID      14
 #define SLOT_OFF_IMAGE_INDEX  15
 #define SLOT_OFF_BOOT_COUNTER 16
 #define SLOT_OFF_BOOT_FB      17
 #define SLOT_OFF_NEW_META     18
 #define SLOT_OFF_ERROR_CODE   19
-#define SLOT_RECORD_DATA_LEN  18  // bytes [2..19], covered by CRC
+#define SLOT_RECORD_DATA_LEN  18  /* bytes 2..19, covered by CRC */
 
-
-/* ----- API ----- */
-
-// Load the current A/B metadata block into *out and return which FRAM copy was used.
-// Returns true if a valid committed block is found.
+/* Load the newest valid committed copy and update the internal working copy. */
 bool FRAMMETA_Load(fram_meta_block_t* out, uint32_t* cur_addr);
 
-// Read and classify both A/B copies without changing g_work or writing FRAM.
-// Returns true when at least one valid committed copy was selected.
+/* Read and classify both copies without changing the internal working copy. */
 bool FRAMMETA_ReadSnapshot(fram_meta_snapshot_t* out);
 
-// Initialize FRAM with a default block (first-time or full repair).
-// active_idx is set to the image you want to boot by default (e.g., 4 for S5 current app).
+/* Initialize copy A with default records and the supplied active slot. */
 bool FRAMMETA_InitDefaults(uint8_t active_idx);
 
-// Commit a new generation (write to the other A/B copy, commit byte last, verify).
+/* Commit the next generation to the inactive copy, commit byte last, and verify. */
 bool FRAMMETA_CommitNext(const fram_meta_block_t* next_in, uint32_t cur_addr);
-
 
 bool FRAMMETA_SetImageInfo(uint8_t img_id,
                            uint32_t flash_addr,
@@ -94,36 +92,30 @@ bool FRAMMETA_SetImageInfo(uint8_t img_id,
                            uint32_t image_crc,
                            uint8_t bank_id);
 
-// Select an existing image as a fresh pending boot and commit the change.
+/* Select an existing image as a fresh pending boot and commit the change. */
 bool FRAMMETA_ActivateImage(uint8_t img_id);
 
-// Convenience mutators that modify an in-RAM working copy (stored internally).
-// After calling setters, call FRAMMETA_CommitNext() to persist.
+/* Working-copy mutators; call FRAMMETA_CommitNext() to persist changes. */
 void FRAMMETA_SetActiveIndex(uint8_t idx);
 
-// Update one slot's 20-byte record. Packs all fields: flash_addr, image_size,
-// image_crc32, bank_id, and boot state fields. Call FRAMMETA_CommitNext() to persist.
 void FRAMMETA_SetSlot(uint8_t slot_idx,
-                      uint32_t base_addr,    // flash address of image
-                      uint32_t image_size,   // image size in bytes
-                      uint32_t image_crc,    // CRC32 of image
-                      uint8_t  bank_id,      // flash bank (0=bank1, 1=bank2)
-                      uint8_t boot_feedback, // e.g. BOOT_NEW_IMAGE or BOOTED_OK
-                      uint8_t boot_counter,  // decremented by bootloader on each attempt
-                      uint8_t new_metadata,  // 1=pending confirm, 0=confirmed healthy
+                      uint32_t base_addr,
+                      uint32_t image_size,
+                      uint32_t image_crc,
+                      uint8_t bank_id,
+                      uint8_t boot_feedback,
+                      uint8_t boot_counter,
+                      uint8_t new_metadata,
                       uint8_t error_code);
 
-// Accessors (from the internal working copy loaded by FRAMMETA_Load / InitDefaults)
+/* Accessors for the internal working copy. */
 uint8_t FRAMMETA_GetActiveIndex(void);
 bool FRAMMETA_GetSlotRaw(uint8_t slot_idx, uint8_t out20[20]);
 
-/* Optional: helper to force-recompute per-slot record CRC (2 bytes on [2..6]) */
+/* Recompute the selected record's CRC16 over bytes 2..19. */
 void FRAMMETA_RecalcSlotCRC(uint8_t slot_idx);
 
-// Call once at startup after peripherals are ready.
-// Tells the bootloader this image booted successfully so it does not
-// decrement the boot counter or fall back to the golden image on next reset.
-// Returns true if the confirmation was persisted to FRAM, false otherwise.
+/* Persist BOOTED_OK for the active slot after startup health checks pass. */
 bool ConfirmBoot(void);
 
 #endif /* INC_FRAM_META_H_ */

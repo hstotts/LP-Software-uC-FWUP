@@ -52,8 +52,6 @@
 #define MD_META_CONFIRMED         0u
 #define MD_META_PENDING           1u
 
-// ---------------------- FWUP State Machine --------------------------------
-
 uint8_t g_fw_staging[SRAM_FW_STAGING_SIZE]
 	__attribute__((section(".fw_staging"), aligned(32), used));
 
@@ -62,10 +60,11 @@ _Static_assert(sizeof(g_fw_staging) == 0x00020000u,
 
 extern uint32_t g_pfnVectors[];
 
-static int fwup_get_executing_bank(uint8_t* bank_id)
+static int fwup_get_executing_bank_id(uint8_t* bank_id)
 {
-	if (bank_id == NULL)
+	if (bank_id == NULL) {
 		return 0;
+	}
 
 	uintptr_t linked_image_base = (uintptr_t)&g_pfnVectors[0];
 
@@ -106,22 +105,21 @@ typedef enum {
 /* Erase/program/readback/metadata failures deliberately remain STAGING so
  * ground may retry FWUP_FLASH. Only a successful metadata commit returns IDLE. */
 static fwup_state_t fwup_state = FWUP_STATE_IDLE;
-static uint8_t  fwup_img_id = 0;
-static uint32_t fwup_expected_size = 0;
-static uint32_t fwup_expected_crc32 = 0;
-static uint32_t fwup_bytes_written = 0;
+static uint8_t fwup_target_slot = 0u;
+static uint32_t fwup_expected_size = 0u;
+static uint32_t fwup_expected_crc32 = 0u;
+static uint32_t fwup_staged_extent = 0u;
 
 /* Placement frozen from the trusted slot descriptor at FWUP_BEGIN. */
-static uint32_t fwup_target_addr = 0;
-static uint8_t  fwup_target_bank = 0;
-// ----------------------------------------------------------------------------
+static uint32_t fwup_target_address = 0u;
+static uint8_t fwup_target_bank = 0u;
 
 static uint32_t read_u32_le(const uint8_t* raw, uint8_t offset)
 {
-	return  (uint32_t)raw[offset]
-		 | ((uint32_t)raw[offset + 1u] << 8)
-		 | ((uint32_t)raw[offset + 2u] << 16)
-		 | ((uint32_t)raw[offset + 3u] << 24);
+	return (uint32_t)raw[offset] |
+		   ((uint32_t)raw[offset + 1u] << 8) |
+		   ((uint32_t)raw[offset + 2u] << 16) |
+		   ((uint32_t)raw[offset + 3u] << 24);
 }
 
 static bool fwup_staged_vectors_valid(void)
@@ -129,9 +127,9 @@ static bool fwup_staged_vectors_valid(void)
 	uint32_t app_sp = read_u32_le(g_fw_staging, 0u);
 	uint32_t app_pc = read_u32_le(g_fw_staging, 4u);
 	uint32_t reset_addr = app_pc & ~1u;
-	uint32_t image_end = fwup_target_addr + fwup_expected_size;
+	uint32_t image_end = fwup_target_address + fwup_expected_size;
 
-	if (image_end < fwup_target_addr) {
+	if (image_end < fwup_target_address) {
 		return false;
 	}
 	if (app_sp <= 0x20000000u || app_sp > 0x20080000u ||
@@ -139,16 +137,16 @@ static bool fwup_staged_vectors_valid(void)
 		return false;
 	}
 	return (app_pc & 1u) != 0u &&
-		   reset_addr >= fwup_target_addr && reset_addr < image_end;
+		   reset_addr >= fwup_target_address && reset_addr < image_end;
 }
 
 static bool fwup_boot_candidate_valid(uint8_t img_id,
-									  uint32_t requested_addr,
-									  const uint8_t rec[20])
+                                      uint32_t requested_addr,
+                                      const uint8_t record[20])
 {
 	fw_slot_desc_t slot;
 
-	if (rec == NULL || !fw_slot_get(img_id, &slot)) {
+	if (record == NULL || !fw_slot_get(img_id, &slot)) {
 		return false;
 	}
 
@@ -162,21 +160,22 @@ static bool fwup_boot_candidate_valid(uint8_t img_id,
 	}
 
 	uint16_t stored_record_crc =
-		((uint16_t)rec[SLOT_OFF_CRC16_HI] << 8)
-		| rec[SLOT_OFF_CRC16_LO];
+		((uint16_t)record[SLOT_OFF_CRC16_HI] << 8) |
+		record[SLOT_OFF_CRC16_LO];
 	uint16_t calculated_record_crc =
-		Calc_CRC16((uint8_t*)&rec[2], SLOT_RECORD_DATA_LEN);
+		Calc_CRC16((uint8_t*)&record[2], SLOT_RECORD_DATA_LEN);
 
 	if (stored_record_crc != calculated_record_crc) {
 		return false;
 	}
 
-	uint32_t flash_addr = read_u32_le(rec, SLOT_OFF_FLASH_ADDR);
-	uint32_t image_size = read_u32_le(rec, SLOT_OFF_IMAGE_SIZE);
-	uint32_t stored_image_crc = read_u32_le(rec, SLOT_OFF_IMAGE_CRC32);
+	uint32_t flash_addr = read_u32_le(record, SLOT_OFF_FLASH_ADDR);
+	uint32_t image_size = read_u32_le(record, SLOT_OFF_IMAGE_SIZE);
+	uint32_t stored_image_crc =
+		read_u32_le(record, SLOT_OFF_IMAGE_CRC32);
 
-	if (rec[SLOT_OFF_IMAGE_INDEX] != img_id ||
-		rec[SLOT_OFF_BANK_ID] != slot.bank_id ||
+	if (record[SLOT_OFF_IMAGE_INDEX] != img_id ||
+		record[SLOT_OFF_BANK_ID] != slot.bank_id ||
 		flash_addr != slot.base ||
 		image_size < 8u || image_size > slot.capacity) {
 		return false;
@@ -213,7 +212,7 @@ static bool fwup_boot_candidate_valid(uint8_t img_id,
 extern QueueHandle_t UART_OBC_Out_Queue;
 extern UART_HandleTypeDef huart5;
 
-extern volatile uint8_t g_boot_confirmed;  // set by ConfirmBoot() at startup (main.c)
+extern volatile uint8_t g_boot_confirmed;
 
 extern osThreadId PUS_3_TaskHandle;
 extern osThreadId Watchdog_TaskHandle;
@@ -243,41 +242,42 @@ static const fram_meta_block_t* metadata_selected_block(
 	return NULL;
 }
 
-static bool metadata_record_crc_valid(const uint8_t rec[20])
+static bool metadata_record_crc_valid(const uint8_t record[20])
 {
-	if (rec == NULL) {
+	if (record == NULL) {
 		return false;
 	}
 
-	uint16_t stored_crc = ((uint16_t)rec[SLOT_OFF_CRC16_HI] << 8)
-						  | rec[SLOT_OFF_CRC16_LO];
+	uint16_t stored_crc =
+		((uint16_t)record[SLOT_OFF_CRC16_HI] << 8) |
+		record[SLOT_OFF_CRC16_LO];
 	uint16_t calculated_crc =
-		Calc_CRC16((uint8_t*)&rec[2], SLOT_RECORD_DATA_LEN);
+		Calc_CRC16((uint8_t*)&record[2], SLOT_RECORD_DATA_LEN);
 	return stored_crc == calculated_crc;
 }
 
-static bool metadata_record_installed(uint8_t slot_id,
-									  const uint8_t rec[20])
+static bool metadata_record_matches_slot(uint8_t slot_id,
+                                         const uint8_t record[20])
 {
 	fw_slot_desc_t slot;
-	if (!metadata_record_crc_valid(rec) ||
+	if (record == NULL ||
 		!fw_slot_get(slot_id, &slot) ||
 		(slot.role != FW_SLOT_ROLE_GOLDEN && slot.role != FW_SLOT_ROLE_OTA)) {
 		return false;
 	}
 
-	uint32_t flash_addr = read_u32_le(rec, SLOT_OFF_FLASH_ADDR);
-	uint32_t image_size = read_u32_le(rec, SLOT_OFF_IMAGE_SIZE);
+	uint32_t flash_addr = read_u32_le(record, SLOT_OFF_FLASH_ADDR);
+	uint32_t image_size = read_u32_le(record, SLOT_OFF_IMAGE_SIZE);
 
-	return rec[SLOT_OFF_IMAGE_INDEX] == slot_id &&
-		   rec[SLOT_OFF_BANK_ID] == slot.bank_id &&
+	return record[SLOT_OFF_IMAGE_INDEX] == slot_id &&
+		   record[SLOT_OFF_BANK_ID] == slot.bank_id &&
 		   flash_addr == slot.base &&
 		   image_size >= 8u && image_size <= slot.capacity;
 }
 
 static uint8_t metadata_slot_flags(uint8_t slot_id,
-								   const uint8_t rec[20],
-								   uint8_t active_idx)
+                                   const uint8_t record[20],
+                                   uint8_t active_idx)
 {
 	uint8_t flags = 0u;
 	fw_slot_desc_t slot;
@@ -297,17 +297,17 @@ static uint8_t metadata_slot_flags(uint8_t slot_id,
 		flags |= MD_FLAG_ACTIVE;
 	}
 
-	if (metadata_record_crc_valid(rec)) {
+	if (metadata_record_crc_valid(record)) {
 		flags |= MD_FLAG_RECORD_CRC_OK;
 
-		if (metadata_record_installed(slot_id, rec)) {
+		if (metadata_record_matches_slot(slot_id, record)) {
 			flags |= MD_FLAG_INSTALLED;
 		}
-		if (rec[SLOT_OFF_NEW_META] == MD_META_PENDING) {
+		if (record[SLOT_OFF_NEW_META] == MD_META_PENDING) {
 			flags |= MD_FLAG_PENDING;
 		}
-		if (rec[SLOT_OFF_NEW_META] == MD_META_CONFIRMED &&
-			rec[SLOT_OFF_BOOT_FB] == MD_BOOTED_OK) {
+		if (record[SLOT_OFF_NEW_META] == MD_META_CONFIRMED &&
+			record[SLOT_OFF_BOOT_FB] == MD_BOOTED_OK) {
 			flags |= MD_FLAG_BOOTED_OK;
 		}
 	}
@@ -335,7 +335,7 @@ static void report_put_u32_le(uint8_t* data, uint16_t* offset, uint32_t value)
 }
 
 static void init_function_report(UART_OUT_OBC_msg* msg,
-								 const PUS_TC_header_t* PUS_TC_h)
+                                 const PUS_TC_header_t* PUS_TC_h)
 {
 	*msg = (UART_OUT_OBC_msg){0};
 	msg->PUS_HEADER_PRESENT = 1u;
@@ -360,8 +360,8 @@ static void send_version_report(const PUS_TC_header_t* PUS_TC_h)
 }
 
 static void send_metadata_summary(const SPP_header_t* SPP_h,
-								  const PUS_TC_header_t* PUS_TC_h,
-								  const fram_meta_snapshot_t* snapshot)
+                                  const PUS_TC_header_t* PUS_TC_h,
+                                  const fram_meta_snapshot_t* snapshot)
 {
 	UART_OUT_OBC_msg msg;
 	init_function_report(&msg, PUS_TC_h);
@@ -370,11 +370,12 @@ static void send_metadata_summary(const SPP_header_t* SPP_h,
 	uint8_t active_idx = selected != NULL ? selected->active_idx : 0u;
 	bool valid_a = snapshot->copy_a_status == FRAMMETA_COPY_VALID;
 	bool valid_b = snapshot->copy_b_status == FRAMMETA_COPY_VALID;
-	uint8_t overall_status = (valid_a && valid_b)
-							 ? MD_OVERALL_OK
-							 : ((valid_a || valid_b)
-								? MD_OVERALL_DEGRADED
-								: MD_OVERALL_UNAVAILABLE);
+	uint8_t overall_status = MD_OVERALL_UNAVAILABLE;
+	if (valid_a && valid_b) {
+		overall_status = MD_OVERALL_OK;
+	} else if (valid_a || valid_b) {
+		overall_status = MD_OVERALL_DEGRADED;
+	}
 
 	uint16_t offset = 0u;
 	report_put_u8(msg.TM_data, &offset, GET_BOOT_METADATA);
@@ -395,16 +396,18 @@ static void send_metadata_summary(const SPP_header_t* SPP_h,
 	report_put_u8(msg.TM_data, &offset, NUM_SLOTS);
 
 	for (uint8_t slot_id = 1u; slot_id <= NUM_SLOTS; slot_id++) {
-		const uint8_t* rec = selected != NULL
-						 ? selected->rec[slot_id - 1u]
-						 : NULL;
+		const uint8_t* record = selected != NULL
+			? selected->rec[slot_id - 1u]
+			: NULL;
 		report_put_u8(msg.TM_data, &offset, slot_id);
 		report_put_u8(msg.TM_data, &offset,
-					  metadata_slot_flags(slot_id, rec, active_idx));
+					  metadata_slot_flags(slot_id, record, active_idx));
 		report_put_u8(msg.TM_data, &offset,
-					  rec != NULL ? rec[SLOT_OFF_BOOT_COUNTER] : 0u);
+					  record != NULL
+					  ? record[SLOT_OFF_BOOT_COUNTER]
+					  : 0u);
 		report_put_u8(msg.TM_data, &offset,
-					  rec != NULL ? rec[SLOT_OFF_ERROR_CODE] : 0u);
+					  record != NULL ? record[SLOT_OFF_ERROR_CODE] : 0u);
 	}
 
 	msg.TM_data_len = offset;
@@ -412,21 +415,21 @@ static void send_metadata_summary(const SPP_header_t* SPP_h,
 }
 
 static void send_metadata_slot_detail(const PUS_TC_header_t* PUS_TC_h,
-									  const fram_meta_snapshot_t* snapshot,
-									  uint8_t slot_id)
+                                      const fram_meta_snapshot_t* snapshot,
+                                      uint8_t slot_id)
 {
 	UART_OUT_OBC_msg msg;
 	init_function_report(&msg, PUS_TC_h);
 
 	const fram_meta_block_t* selected = metadata_selected_block(snapshot);
-	const uint8_t* rec = selected->rec[slot_id - 1u];
+	const uint8_t* record = selected->rec[slot_id - 1u];
 	fw_slot_desc_t slot = {0};
 	(void)fw_slot_get(slot_id, &slot);
 
 	uint16_t stored_record_crc =
-		((uint16_t)rec[SLOT_OFF_CRC16_HI] << 8)
-		| rec[SLOT_OFF_CRC16_LO];
-	bool record_crc_valid = metadata_record_crc_valid(rec);
+		((uint16_t)record[SLOT_OFF_CRC16_HI] << 8) |
+		record[SLOT_OFF_CRC16_LO];
+	bool record_crc_valid = metadata_record_crc_valid(record);
 
 	uint16_t offset = 0u;
 	report_put_u8(msg.TM_data, &offset, GET_BOOT_METADATA);
@@ -435,18 +438,18 @@ static void send_metadata_slot_detail(const PUS_TC_header_t* PUS_TC_h,
 	report_put_u8(msg.TM_data, &offset, slot_id);
 	report_put_u8(msg.TM_data, &offset, (uint8_t)slot.role);
 	report_put_u8(msg.TM_data, &offset,
-				  metadata_slot_flags(slot_id, rec, selected->active_idx));
-	report_put_u8(msg.TM_data, &offset, rec[SLOT_OFF_BANK_ID]);
+				  metadata_slot_flags(slot_id, record, selected->active_idx));
+	report_put_u8(msg.TM_data, &offset, record[SLOT_OFF_BANK_ID]);
 	report_put_u32_le(msg.TM_data, &offset,
-				   read_u32_le(rec, SLOT_OFF_FLASH_ADDR));
+				   read_u32_le(record, SLOT_OFF_FLASH_ADDR));
 	report_put_u32_le(msg.TM_data, &offset,
-				   read_u32_le(rec, SLOT_OFF_IMAGE_SIZE));
+				   read_u32_le(record, SLOT_OFF_IMAGE_SIZE));
 	report_put_u32_le(msg.TM_data, &offset,
-				   read_u32_le(rec, SLOT_OFF_IMAGE_CRC32));
-	report_put_u8(msg.TM_data, &offset, rec[SLOT_OFF_BOOT_COUNTER]);
-	report_put_u8(msg.TM_data, &offset, rec[SLOT_OFF_BOOT_FB]);
-	report_put_u8(msg.TM_data, &offset, rec[SLOT_OFF_NEW_META]);
-	report_put_u8(msg.TM_data, &offset, rec[SLOT_OFF_ERROR_CODE]);
+				   read_u32_le(record, SLOT_OFF_IMAGE_CRC32));
+	report_put_u8(msg.TM_data, &offset, record[SLOT_OFF_BOOT_COUNTER]);
+	report_put_u8(msg.TM_data, &offset, record[SLOT_OFF_BOOT_FB]);
+	report_put_u8(msg.TM_data, &offset, record[SLOT_OFF_NEW_META]);
+	report_put_u8(msg.TM_data, &offset, record[SLOT_OFF_ERROR_CODE]);
 	report_put_u16_le(msg.TM_data, &offset, stored_record_crc);
 	report_put_u8(msg.TM_data, &offset, record_crc_valid ? 1u : 0u);
 	report_put_u8(msg.TM_data, &offset,
@@ -568,52 +571,67 @@ TM_Err_Codes PUS_8_unpack_msg(PUS_8_msg *pus8_msg_received, PUS_8_msg_unpacked* 
 				memcpy((uint8_t*)&pus8_msg_unpacked->N_samples_per_step, data_interator, sizeof(pus8_msg_unpacked->N_samples_per_step));
 				data_interator += sizeof(pus8_msg_unpacked->N_samples_per_step);
 				break;
-// ----------------------------------------------------------------------------
 			case IMG_ID_ARG_ID:
-				if ((data_end - data_interator) < 1) return INVALID_PLENGTH;
+				if ((data_end - data_interator) < 1) {
+					return INVALID_PLENGTH;
+				}
 				pus8_msg_unpacked->img_id = *data_interator++;
 				break;
 
 			case IMG_SIZE_ARG_ID:
-				if ((data_end - data_interator) < 4) return INVALID_PLENGTH;
-				memcpy(&pus8_msg_unpacked->img_size, data_interator, 4);
-				data_interator += 4;
+				if ((data_end - data_interator) < 4) {
+					return INVALID_PLENGTH;
+				}
+				memcpy(&pus8_msg_unpacked->img_size, data_interator, 4u);
+				data_interator += 4u;
 				break;
 
 			case IMG_CRC32_ARG_ID:
-				if ((data_end - data_interator) < 4) return INVALID_PLENGTH;
-				memcpy(&pus8_msg_unpacked->img_crc32, data_interator, 4);
-				data_interator += 4;
+				if ((data_end - data_interator) < 4) {
+					return INVALID_PLENGTH;
+				}
+				memcpy(&pus8_msg_unpacked->img_crc32, data_interator, 4u);
+				data_interator += 4u;
 				break;
 
 			case IMG_ADDR_ARG_ID:
-				if ((data_end - data_interator) < 4) return INVALID_PLENGTH;
-				memcpy(&pus8_msg_unpacked->img_addr, data_interator, 4);
-				data_interator += 4;
+				if ((data_end - data_interator) < 4) {
+					return INVALID_PLENGTH;
+				}
+				memcpy(&pus8_msg_unpacked->img_addr, data_interator, 4u);
+				data_interator += 4u;
 				break;
 
 			case SRAM_DEST_ADDR_ARG_ID:
-				if ((data_end - data_interator) < 4) return INVALID_PLENGTH;
-				memcpy(&pus8_msg_unpacked->sram_dest_addr, data_interator, 4);
-				data_interator += 4;
+				if ((data_end - data_interator) < 4) {
+					return INVALID_PLENGTH;
+				}
+				memcpy(&pus8_msg_unpacked->sram_dest_addr,
+					   data_interator,
+					   4u);
+				data_interator += 4u;
 				break;
 
 			case BANK_ID_ARG_ID:
-				if ((data_end - data_interator) < 1) return INVALID_PLENGTH;
+				if ((data_end - data_interator) < 1) {
+					return INVALID_PLENGTH;
+				}
 				pus8_msg_unpacked->bank_id = *data_interator++;
 				break;
 
-				case IMG_DATA_ARG_ID:
+			case IMG_DATA_ARG_ID:
 			{
-				// consume the rest of the packet as image bytes
-				uint16_t remain = (uint16_t)(data_end - data_interator);
-				if (remain > PUS_8_MAX_DATA_LEN) return INVALID_PLENGTH;
-				pus8_msg_unpacked->img_data_len = remain;
-				memcpy(pus8_msg_unpacked->img_data, data_interator, remain);
+				uint16_t remaining = (uint16_t)(data_end - data_interator);
+				if (remaining > PUS_8_MAX_DATA_LEN) {
+					return INVALID_PLENGTH;
+				}
+				pus8_msg_unpacked->img_data_len = remaining;
+				memcpy(pus8_msg_unpacked->img_data,
+					   data_interator,
+					   remaining);
 				data_interator = data_end;
 				break;
 			}
-// ----------------------------------------------------------------------------
 
 			default:
 				return UNDEFINED_PARAM_ID;
@@ -1100,16 +1118,15 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 
 		case REBOOT_DEVICE:
 		{
-			// An intentional reboot must not look like a watchdog crash: the
-			// bootloader falls back to golden on an IWDG reset after BOOTED_OK.
-			// NVIC_SystemReset() sets SFTRSTF (not IWDGRSTF), so the confirmed
-			// image survives the reboot. This case sends its own completion ACK
-			// and never returns to the PUS-8 wrapper; if it is ever refactored to
-			// return, drop the manual ACK and let the wrapper send exactly one.
+			/* A software reset preserves a confirmed image; an IWDG reset can
+			 * trigger golden-image recovery. This path sends its own completion
+			 * acknowledgement because it never returns to the PUS-8 task. */
 			PUS_1_send_succ_comp(SPP_h, PUS_TC_h);
-			osDelay(100);             // let the UART queue/DMA flush the ACK
-			NVIC_SystemReset();       // sets SFTRSTF, not IWDGRST — never returns
-			for (;;) { }              // defensive: do not fall through if reset is delayed
+			osDelay(100u);
+			NVIC_SystemReset();
+			for (;;) {
+				/* Defensive: reset should never return. */
+			}
 		}
 
 		case JUMP_TO_IMAGE:
@@ -1125,10 +1142,10 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 				return IMAGE_NOT_BOOTABLE;
 			}
 
-			const uint8_t* rec = blk.rec[img_id - 1u];
+			const uint8_t* record = blk.rec[img_id - 1u];
 			if (!fwup_boot_candidate_valid(img_id,
-											 pus8_msg_unpacked->img_addr,
-											 rec)) {
+										 pus8_msg_unpacked->img_addr,
+										 record)) {
 				return IMAGE_NOT_BOOTABLE;
 			}
 
@@ -1137,15 +1154,13 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			}
 
 			PUS_1_send_succ_comp(SPP_h, PUS_TC_h);
-			osDelay(100);   // give UART time to flush the completion ACK
+			osDelay(100u);
 			NVIC_SystemReset();
 
 			for (;;) {
 				/* Defensive: reset should never return. */
 			}
 		}
-//------------------------------ UPDATE CASES --------------------------------------------
-
 		case FWUP_BEGIN:
 		{
 			fw_slot_desc_t target;
@@ -1165,7 +1180,7 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 			}
 
 			uint8_t executing_bank;
-			if (!fwup_get_executing_bank(&executing_bank)) {
+			if (!fwup_get_executing_bank_id(&executing_bank)) {
 				return BAD_STATE;
 			}
 
@@ -1173,13 +1188,13 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 				return BAD_STATE;
 			}
 
-			// Start a new update session only after the request is accepted
+			/* Do not replace an active session until every request field passes. */
 			fwup_state = FWUP_STATE_STAGING;
-			fwup_img_id = target.slot_id;
+			fwup_target_slot = target.slot_id;
 			fwup_expected_size = pus8_msg_unpacked->img_size;
 			fwup_expected_crc32 = pus8_msg_unpacked->img_crc32;
-			fwup_bytes_written = 0;
-			fwup_target_addr = target.base;
+			fwup_staged_extent = 0u;
+			fwup_target_address = target.base;
 			fwup_target_bank = target.bank_id;
 
 			break;
@@ -1188,39 +1203,40 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 		case FWUP_SRAM_WRITE:
 		{
 			if (fwup_state != FWUP_STATE_STAGING) {
-				return UPDATE_INACTIVE; 
+				return UPDATE_INACTIVE;
 			}
 
-			uint32_t addr = pus8_msg_unpacked->sram_dest_addr;
-			uint16_t len  = pus8_msg_unpacked->img_data_len;
+			uint32_t destination = pus8_msg_unpacked->sram_dest_addr;
+			uint16_t chunk_length = pus8_msg_unpacked->img_data_len;
 
-			if (len == 0) {
+			if (chunk_length == 0u) {
 				return INVALID_PLENGTH;
 			}
 
-			// Must land inside staging region
-			if (addr < SRAM_FW_STAGING_BASE) {
+			if (destination < SRAM_FW_STAGING_BASE) {
 				return SRAM_BUFFER_FAIL;
 			}
 
-			uint32_t rel_start = addr - SRAM_FW_STAGING_BASE;
-			if (rel_start > SRAM_FW_STAGING_SIZE ||
-				(uint32_t)len > SRAM_FW_STAGING_SIZE - rel_start) {
+			uint32_t staging_offset = destination - SRAM_FW_STAGING_BASE;
+			if (staging_offset > SRAM_FW_STAGING_SIZE ||
+				(uint32_t)chunk_length >
+					SRAM_FW_STAGING_SIZE - staging_offset) {
 				return SRAM_BUFFER_FAIL;
 			}
 
-			// Must not exceed the declared image size window
-			if (rel_start > fwup_expected_size ||
-				(uint32_t)len > fwup_expected_size - rel_start) {
+			if (staging_offset > fwup_expected_size ||
+				(uint32_t)chunk_length >
+					fwup_expected_size - staging_offset) {
 				return SRAM_IMG_DISCREP;
 			}
 
-			memcpy(&g_fw_staging[rel_start], pus8_msg_unpacked->img_data, len);
+			memcpy(&g_fw_staging[staging_offset],
+				   pus8_msg_unpacked->img_data,
+				   chunk_length);
 
-			// Track highest written offset (+len)
-			uint32_t rel_end = rel_start + len;
-			if (rel_end > fwup_bytes_written) {
-				fwup_bytes_written = rel_end;
+			uint32_t staged_end = staging_offset + chunk_length;
+			if (staged_end > fwup_staged_extent) {
+				fwup_staged_extent = staged_end;
 			}
 
 			break;
@@ -1232,13 +1248,13 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 				return UPDATE_INACTIVE;
 			}
 
-			if (fwup_bytes_written != fwup_expected_size) {
+			if (fwup_staged_extent != fwup_expected_size) {
 				return IMG_INCOMPLETE;
 			}
 
-			// 1) Verify staged SRAM image CRC32
-			uint32_t calc = crc32_calc(g_fw_staging, fwup_expected_size);
-			if (calc != fwup_expected_crc32) {
+			uint32_t staged_crc =
+				crc32_calc(g_fw_staging, fwup_expected_size);
+			if (staged_crc != fwup_expected_crc32) {
 				return CS_DISCREP;
 			}
 
@@ -1250,58 +1266,54 @@ TM_Err_Codes PUS_8_perform_function(SPP_header_t* SPP_h, PUS_TC_header_t* PUS_TC
 
 			/* Preserve the existing command fields for protocol compatibility,
 			 * but require them to match the placement accepted by FWUP_BEGIN. */
-			if (pus8_msg_unpacked->img_id != fwup_img_id ||
-				pus8_msg_unpacked->img_addr != fwup_target_addr ||
+			if (pus8_msg_unpacked->img_id != fwup_target_slot ||
+				pus8_msg_unpacked->img_addr != fwup_target_address ||
 				pus8_msg_unpacked->bank_id != fwup_target_bank) {
 				return FWUP_SLOT_NOT_WRITABLE;
 			}
 
-			/* Command fields are no longer authoritative. */
-			uint32_t flash_addr = fwup_target_addr;
+			uint32_t flash_addr = fwup_target_address;
 
-			// 2) Validate target range is within legal flash
+			/* Retain an explicit range check before the destructive erase. */
 			if (!flash_range_is_within_flash(flash_addr, fwup_expected_size)) {
 				return DEV_CPDU_EXEC_FAIL;
 			}
 
-			// 3) Erase target region (ONCE)
 			if (FLASHIF_EraseRange(flash_addr, fwup_expected_size) != HAL_OK) {
 				return DEV_CPDU_EXEC_FAIL;
 			}
 
-			// 4) Flush D-Cache so physical SRAM contains the staged image
-			//    before FLASHIF_ProgramBuffer reads from it.
-			//    Size must be rounded up to the nearest 32-byte cache line.
+			/* Make the staged bytes visible to flash programming. CMSIS cache
+			 * maintenance requires a 32-byte-aligned extent. */
 			uint32_t aligned_size = (fwup_expected_size + 31u) & ~31u;
 			SCB_CleanDCache_by_Addr((uint32_t*)g_fw_staging, (int32_t)aligned_size);
 
-			// 5) Program flash
 			if (FLASHIF_ProgramBuffer((uint32_t*)flash_addr,
-									g_fw_staging,
-									fwup_expected_size) != FLASHIF_OK) {
+								  g_fw_staging,
+								  fwup_expected_size) != FLASHIF_OK) {
 				return DEV_CPDU_EXEC_FAIL;
 			}
 
-			// 6) Invalidate/reset ALL cache layers before readback
+			/* Discard every cache layer that could hide programmed flash data. */
 			SCB_InvalidateICache();
 			SCB_InvalidateDCache_by_Addr((uint32_t*)flash_addr, (int32_t)aligned_size);
-			// ART accelerator reset — STM32F767 correct macros (stm32f7xx_hal_flash.h)
 			__HAL_FLASH_ART_DISABLE();
 			__HAL_FLASH_ART_RESET();
 			__HAL_FLASH_ART_ENABLE();
 
-			// 7) Readback verify
-			uint32_t flash_crc = crc32_calc((uint8_t*)flash_addr, fwup_expected_size);
+			uint32_t flash_crc =
+				crc32_calc((const uint8_t*)flash_addr, fwup_expected_size);
 			if (flash_crc != fwup_expected_crc32) {
 				return FLASH_CS_DISCREP;
 			}
 
-			// 8) Update FRAM metadata. Keep the session retryable on failure.
-			if (!FRAMMETA_SetImageInfo(fwup_img_id,
-								flash_addr,
-								fwup_expected_size,
-								fwup_expected_crc32,
-								fwup_target_bank)) {
+			/* Publish the image only after flash readback succeeds. A failure
+			 * deliberately leaves the staging session active for retry. */
+			if (!FRAMMETA_SetImageInfo(fwup_target_slot,
+									flash_addr,
+									fwup_expected_size,
+									fwup_expected_crc32,
+									fwup_target_bank)) {
 				return FRAM_META_FAIL;
 			}
 			fwup_state = FWUP_STATE_IDLE;

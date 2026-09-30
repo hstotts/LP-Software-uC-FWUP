@@ -65,16 +65,16 @@ typedef enum {
     UNDEFINED_PARAM_ID          = 0x0142, // Undefined parameter ID
     UNDEFINED_ID                = 0x0132,  // Undefined general identifier
 
-	// --- Firmware update processes ---
-	UPDATE_INACTIVE 			= 0x0500, // Update mode inactive
-	IMG_SIZE_DISCREP			= 0x0501, // Declared image does not fit its selected flash slot
-	SRAM_IMG_DISCREP			= 0x0502, // Image does not fit staging or write exceeds declared image
-	SRAM_BUFFER_FAIL 			= 0x0503, // Write address falls outside the physical staging buffer
-	IMG_INCOMPLETE 				= 0x0504, // Image incomplete in SRAM
-	FWUP_SLOT_NOT_WRITABLE		= 0x0505, // Invalid, bootloader, golden, or reserved target slot
-	FLASH_CS_DISCREP			= 0x0506, // Flash memory CRC mismatch
-	FRAM_META_FAIL				= 0x0507, // FRAM metadata read or commit verification failed
-	IMAGE_NOT_BOOTABLE			= 0x0508  // Existing image metadata, CRC, or vectors are invalid
+    // --- Firmware update processes ---
+    UPDATE_INACTIVE             = 0x0500, // No FWUP staging session is active
+    IMG_SIZE_DISCREP            = 0x0501, // Declared image does not fit the target slot
+    SRAM_IMG_DISCREP            = 0x0502, // Image or write exceeds staging bounds
+    SRAM_BUFFER_FAIL            = 0x0503, // Write falls outside the staging buffer
+    IMG_INCOMPLETE              = 0x0504, // Staged image has not reached its declared size
+    FWUP_SLOT_NOT_WRITABLE      = 0x0505, // Target is invalid, protected, or reserved
+    FLASH_CS_DISCREP            = 0x0506, // Programmed flash CRC does not match
+    FRAM_META_FAIL              = 0x0507, // Metadata read, write, or verification failed
+    IMAGE_NOT_BOOTABLE          = 0x0508  // Metadata, CRC, or vectors are invalid
 
 
 

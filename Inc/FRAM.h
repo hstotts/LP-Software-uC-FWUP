@@ -12,11 +12,10 @@
 #define FRAM_GS_ID_UC 0x0005
 #define FRAM_VHF_TIME_SLOT 0x0006
 
-// Metadata A/B blocks
-// Block size: 14-byte header + NUM_SLOTS(24)*20 = 494 bytes; 0x200 stride
+/* FWUP metadata copies: 12-byte header + 24 20-byte records + 2-byte CRC. */
 #define FRAM_META_BLK_A_ADDR   0x0010u
-#define FRAM_META_BLK_B_ADDR   (FRAM_META_BLK_A_ADDR + 0x0200u)  // 0x0210
-// Safe gap to sweep tables: 0x0FC0 - 0x0410 = 0x0BB0 (2992 bytes)
+#define FRAM_META_BLK_B_ADDR   (FRAM_META_BLK_A_ADDR + 0x0200u) /* 0x0210 */
+/* The reserved copy-B region ends at 0x040F, 2992 bytes before the tables. */
 
 #define FRAM_SWEEP_TABLE_SECTION_START 0x0FC0
 #define FRAM_SWEEP_TABLE_FOOTER_SIZE    8 // bytes

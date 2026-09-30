@@ -47,7 +47,7 @@ typedef struct {
     uint8_t HK_PERIODIC_ID; //ADDED
     uint8_t HK_PERIOD_ID;
 
-    // ----------------------------------------------------------------------------
+    /* Firmware update arguments. */
     uint8_t  img_id;
     uint32_t img_size;
     uint32_t img_crc32;
@@ -57,7 +57,6 @@ typedef struct {
 
     uint8_t  img_data[PUS_8_MAX_DATA_LEN];
     uint16_t img_data_len;
-    // ----------------------------------------------------------------------------
 
 } PUS_8_msg_unpacked;
 
@@ -84,9 +83,9 @@ typedef enum {
     FPGA_GET_SWT_SAMPLES_PER_POINT  = 0x98,
     FPGA_GET_SWT_NPOINTS            = 0xA8,
 
-	// ----------------------------------------------------------------------------
-    REBOOT_DEVICE 					= 0xF0,
-    JUMP_TO_IMAGE					= 0xF1,
+    /* Firmware update and boot management. */
+    REBOOT_DEVICE                   = 0xF0,
+    JUMP_TO_IMAGE                   = 0xF1,
 
     FWUP_BEGIN                      = 0xF3,
     FWUP_SRAM_WRITE                 = 0xF4,
@@ -94,22 +93,19 @@ typedef enum {
 
     GET_BOOT_METADATA               = 0xF6,
     GET_VERSION                     = 0xF7,
-	// ----------------------------------------------------------------------------
 
 
 } PUS_8_Func_ID;
 
-// ----------------------------------------------------------------------------
 typedef enum {
-    IMG_ID_ARG_ID    = 0x20, // u8
-    IMG_SIZE_ARG_ID  = 0x21, // u32 LE
-    IMG_CRC32_ARG_ID = 0x22, // u32 LE
-    IMG_ADDR_ARG_ID       = 0x23, // u32 LE (FLASH address)
-    BANK_ID_ARG_ID        = 0x24, // u8
-    IMG_DATA_ARG_ID       = 0x26, // variable bytes (consume rest)
-    SRAM_DEST_ADDR_ARG_ID = 0x27, // u32 LE (SRAM staging destination)
+    IMG_ID_ARG_ID         = 0x20, /* u8 slot ID */
+    IMG_SIZE_ARG_ID       = 0x21, /* u32 LE image size */
+    IMG_CRC32_ARG_ID      = 0x22, /* u32 LE image CRC-32 */
+    IMG_ADDR_ARG_ID       = 0x23, /* u32 LE flash address */
+    BANK_ID_ARG_ID        = 0x24, /* u8 flash bank ID */
+    IMG_DATA_ARG_ID       = 0x26, /* remaining bytes are image data */
+    SRAM_DEST_ADDR_ARG_ID = 0x27, /* u32 LE staging destination */
 } FWUP_Arg_ID_t;
-// ----------------------------------------------------------------------------
 
 
 typedef enum {

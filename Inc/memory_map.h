@@ -217,15 +217,18 @@ static inline flash_sector_t flash_sector_from_addr(uint32_t addr)
     return SECTOR_INVALID;
 }
 
-// ---- Simple range check ----
+/* Return true only when the complete non-empty range stays within one bank. */
 static inline int flash_range_is_within_flash(uint32_t base, uint32_t size)
 {
-    if (size == 0u) return 0;
-    uint32_t end = base + size - 1u;
-    // avoid overflow
-    if (end < base) return 0;
+    if (size == 0u) {
+        return 0;
+    }
 
-    // must be fully within one of the banks
+    uint32_t end = base + size - 1u;
+    if (end < base) {
+        return 0;
+    }
+
     if ((base >= FLASH_BANK1_BASE && end <= FLASH_BANK1_END) ||
         (base >= FLASH_BANK2_BASE && end <= FLASH_BANK2_END)) {
         return 1;
@@ -233,7 +236,7 @@ static inline int flash_range_is_within_flash(uint32_t base, uint32_t size)
     return 0;
 }
 
-// ---- Firmware deployment slot roles ----
+/* Firmware deployment slot roles. */
 typedef enum {
     FW_SLOT_ROLE_BOOTLOADER = 0,
     FW_SLOT_ROLE_GOLDEN,
@@ -251,23 +254,27 @@ typedef struct {
 
 static inline fw_slot_role_t fw_slot_role(uint8_t slot_id)
 {
-    if (slot_id >= 1u && slot_id <= 4u)
+    if (slot_id >= 1u && slot_id <= 4u) {
         return FW_SLOT_ROLE_BOOTLOADER;
+    }
 
-    if (slot_id == 5u || slot_id == 17u)
+    if (slot_id == 5u || slot_id == 17u) {
         return FW_SLOT_ROLE_GOLDEN;
+    }
 
     if ((slot_id >= 6u && slot_id <= 12u) ||
-        (slot_id >= 18u && slot_id <= 24u))
+        (slot_id >= 18u && slot_id <= 24u)) {
         return FW_SLOT_ROLE_OTA;
+    }
 
     return FW_SLOT_ROLE_RESERVED;
 }
 
 static inline int fw_slot_get(uint8_t slot_id, fw_slot_desc_t* out)
 {
-    if (out == NULL || slot_id < 1u || slot_id > 24u)
+    if (out == NULL || slot_id < 1u || slot_id > 24u) {
         return 0;
+    }
 
     /* Metadata slot IDs are one-based and map directly to zero-based
      * STM32 flash sector numbers. */
@@ -297,7 +304,7 @@ static inline int fw_slot_get(uint8_t slot_id, fw_slot_desc_t* out)
 #define SRAM_SCIENCE_BASE      0x2005A000u
 #define SRAM_SCIENCE_SIZE      0x00002000u
 
-// Firmware staging buffer – holds one incoming OTA image
+/* Firmware staging buffer for one OTA image. */
 #define SRAM_FW_STAGING_BASE   0x2005C000u
 #define SRAM_FW_STAGING_SIZE   0x00020000u
 
